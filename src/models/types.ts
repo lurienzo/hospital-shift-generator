@@ -1,0 +1,107 @@
+export type Weekday = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+
+export const WEEKDAYS: Weekday[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+export const WEEKDAYS_ONLY: Weekday[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+export const WEEKEND_ONLY: Weekday[] = ['saturday', 'sunday'];
+
+export const WEEKDAY_LABELS: Record<Weekday, string> = {
+  monday: 'Lunedì',
+  tuesday: 'Martedì',
+  wednesday: 'Mercoledì',
+  thursday: 'Giovedì',
+  friday: 'Venerdì',
+  saturday: 'Sabato',
+  sunday: 'Domenica',
+};
+
+export type TimeSlot = '08:00-14:00' | '14:00-20:00' | '20:00-08:00';
+
+export const TIME_SLOTS: TimeSlot[] = ['08:00-14:00', '14:00-20:00', '20:00-08:00'];
+
+export const TIME_SLOT_LABELS: Record<TimeSlot, string> = {
+  '08:00-14:00': 'Mattina (08:00-14:00)',
+  '14:00-20:00': 'Pomeriggio (14:00-20:00)',
+  '20:00-08:00': 'Notte (20:00-08:00)',
+};
+
+export const TIME_SLOT_SHORT_LABELS: Record<TimeSlot, string> = {
+  '08:00-14:00': 'Mattina',
+  '14:00-20:00': 'Pomeriggio',
+  '20:00-08:00': 'Notte',
+};
+
+export const TIME_SLOT_ORDER: Record<TimeSlot, number> = {
+  '08:00-14:00': 0,
+  '14:00-20:00': 1,
+  '20:00-08:00': 2,
+};
+
+export interface ScheduleSlot {
+  id: string;
+  weekday: Weekday;
+  timeSlot: TimeSlot;
+  requiredDoctors: number;
+  isCritical: boolean;
+}
+
+export interface OperativeRoom {
+  id: string;
+  name: string;
+  color: string;
+  slots: ScheduleSlot[];
+}
+
+export const DOCTOR_COLORS = [
+  '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6',
+  '#1abc9c', '#e91e63', '#00bcd4', '#ff5722', '#607d8b',
+  '#8bc34a', '#ff9800', '#795548', '#009688', '#673ab7',
+  '#03a9f4', '#cddc39', '#ffc107', '#4caf50', '#2196f3',
+];
+
+export interface Doctor {
+  id: string;
+  name: string;
+  color: string;
+  excludedRooms: string[];
+  excludedWeekdays: Weekday[];
+}
+
+export interface Assignment {
+  id: string;
+  date: string;
+  roomId: string;
+  roomName: string;
+  timeSlot: TimeSlot;
+  doctorId: string;
+  doctorName: string;
+}
+
+export interface HolidayConfig {
+  date: string;
+  disabledSlots: TimeSlot[];
+}
+
+export interface GenerationConfig {
+  year: number;
+  month: number;
+  holidays: HolidayConfig[];
+  doctorDateExclusions: Record<string, string[]>;
+}
+
+export interface MonthlySchedule {
+  year: number;
+  month: number;
+  holidays: string[];
+  assignments: Assignment[];
+}
+
+export interface DoctorStats {
+  doctorId: string;
+  doctorName: string;
+  doctorColor: string;
+  totalShifts: number;
+  weekendShifts: number;
+  criticalShifts: number;
+  shiftsByRoom: Record<string, number>;
+  shiftsByTimeSlot: Record<TimeSlot, number>;
+}
