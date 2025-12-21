@@ -22,6 +22,16 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [showAddModal, setShowAddModal] = useState<EditingCell | null>(null);
 
+  const doctorDateExclusions = useMemo(() => {
+    const config = StorageService.loadGenerationConfig(schedule.year, schedule.month);
+    return config?.doctorDateExclusions || {};
+  }, [schedule.year, schedule.month]);
+
+  const isDoctorOnVacation = (date: string, doctorId: string): boolean => {
+    const exclusions = doctorDateExclusions[doctorId] || [];
+    return exclusions.includes(date);
+  };
+
   const monthNames = [
     'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
     'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre',
@@ -107,6 +117,10 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const getAssignmentInvalidReason = (assignment: Assignment): string | null => {
+    if (isDoctorOnVacation(assignment.date, assignment.doctorId)) {
+      return 'Ferie';
+    }
+
     if (isDoctorOnRestDay(assignment.date, assignment.doctorId)) {
       return 'Smontante';
     }
@@ -129,7 +143,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
 
   const invalidAssignments = useMemo(() => {
     return schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
-  }, [schedule.assignments, rooms]);
+  }, [schedule.assignments, rooms, doctorDateExclusions]);
 
   const getNextDayStr = (date: string): string => {
     const currentDate = new Date(date);
@@ -343,10 +357,12 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                                       const sameDayConflicts = isExclusiveShift ? getDoctorSameDayOtherAssignmentsCount(dateStr, doctor.id, assignment.id) : 0;
                                       const isOnRestDay = isDoctorOnRestDay(dateStr, doctor.id);
                                       const hasExclusiveConflict = hasDoctorExclusiveShiftOnDay(dateStr, doctor.id) && !isCurrent;
-                                      const hasWarning = (nextDayConflicts > 0 || sameDayConflicts > 0 || isOnRestDay || hasExclusiveConflict) && !isCurrent;
+                                      const isOnVacation = isDoctorOnVacation(dateStr, doctor.id);
+                                      const hasWarning = (nextDayConflicts > 0 || sameDayConflicts > 0 || isOnRestDay || hasExclusiveConflict || isOnVacation) && !isCurrent;
                                       
                                       let warningText = '';
-                                      if (isOnRestDay) warningText = 'Smontante';
+                                      if (isOnVacation) warningText = 'Ferie';
+                                      else if (isOnRestDay) warningText = 'Smontante';
                                       else if (hasExclusiveConflict) warningText = 'Montante';
                                       else if (sameDayConflicts > 0) warningText = `${sameDayConflicts} oggi`;
                                       else if (nextDayConflicts > 0) warningText = `${nextDayConflicts} domani`;
@@ -358,12 +374,12 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                                           style={{ borderLeftColor: doctor.color }}
                                           onClick={() => !isUnavailable && changeAssignmentDoctor(assignment.id, doctor.id)}
                                           disabled={isUnavailable}
-                                          title={isUnavailable ? unavailabilityReason! : warningText ? `${warningText} - creerà turno invalido` : ''}
+                                          title={isUnavailable ? unavailabilityReason! : warningText ? `${warningText} - attenzione` : ''}
                                         >
                                           <span className="doctor-dot" style={{ backgroundColor: doctor.color }}></span>
                                           {doctor.name}
                                           {isUnavailable && <span className="unavailable-badge">{unavailabilityReason}</span>}
-                                          {hasWarning && !isUnavailable && <span className="warning-badge">⚠️ {warningText}</span>}
+                                          {hasWarning && !isUnavailable && <span className="warning-badge">{isOnVacation ? '🏖️' : '⚠️'} {warningText}</span>}
                                         </button>
                                       );
                                     })}
@@ -435,10 +451,12 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                     const nextDayConflicts = isRestShift ? getDoctorNextDayAssignmentsCount(showAddModal.date, doctor.id) : 0;
                     const sameDayConflicts = isExclusiveShift ? getDoctorSameDayOtherAssignmentsCount(showAddModal.date, doctor.id) : 0;
                     const hasExclusiveConflict = hasDoctorExclusiveShiftOnDay(showAddModal.date, doctor.id);
-                    const hasWarning = isOnRestDay || nextDayConflicts > 0 || sameDayConflicts > 0 || hasExclusiveConflict;
+                    const isOnVacation = isDoctorOnVacation(showAddModal.date, doctor.id);
+                    const hasWarning = isOnRestDay || nextDayConflicts > 0 || sameDayConflicts > 0 || hasExclusiveConflict || isOnVacation;
                     
                     let warningText = '';
-                    if (isOnRestDay) warningText = 'Smontante';
+                    if (isOnVacation) warningText = 'Ferie';
+                    else if (isOnRestDay) warningText = 'Smontante';
                     else if (hasExclusiveConflict) warningText = 'Montante';
                     else if (sameDayConflicts > 0) warningText = `${sameDayConflicts} oggi`;
                     else if (nextDayConflicts > 0) warningText = `${nextDayConflicts} domani`;
@@ -454,12 +472,12 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                         }}
                         onClick={() => !isUnavailable && addAssignment(showAddModal.date, showAddModal.roomId, showAddModal.timeSlot, doctor.id)}
                         disabled={isUnavailable}
-                        title={isUnavailable ? unavailabilityReason! : warningText ? `${warningText} - creerà turno invalido` : ''}
+                        title={isUnavailable ? unavailabilityReason! : warningText ? `${warningText} - attenzione` : ''}
                       >
                         <span className="doctor-dot" style={{ backgroundColor: doctor.color }}></span>
                         {doctor.name}
                         {isUnavailable && <span className="unavailable-text">{unavailabilityReason}</span>}
-                        {hasWarning && !isUnavailable && <span className="warning-text">⚠️ {warningText}</span>}
+                        {hasWarning && !isUnavailable && <span className="warning-text">{isOnVacation ? '🏖️' : '⚠️'} {warningText}</span>}
                       </button>
                     );
                   })}
