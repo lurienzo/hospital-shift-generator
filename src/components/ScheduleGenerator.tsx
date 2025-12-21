@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, TimeSlot, TIME_SLOTS, TIME_SLOT_SHORT_LABELS } from '../models/types';
+import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig } from '../models/types';
 import { ScheduleGeneratorService } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import './ScheduleGenerator.css';
@@ -81,19 +81,20 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
         setEditingHoliday(null);
       }
     } else {
-      newHolidays = [...holidays, { date: dateStr, disabledSlots: [] }];
+      newHolidays = [...holidays, { date: dateStr, disabledRooms: [] }];
     }
     setHolidays(newHolidays);
     saveConfig(newHolidays, doctorDateExclusions);
   };
 
-  const toggleHolidaySlot = (dateStr: string, slot: TimeSlot) => {
+  const toggleHolidayRoom = (dateStr: string, roomId: string) => {
     const newHolidays = holidays.map(h => {
       if (h.date !== dateStr) return h;
-      const disabledSlots = h.disabledSlots.includes(slot)
-        ? h.disabledSlots.filter(s => s !== slot)
-        : [...h.disabledSlots, slot];
-      return { ...h, disabledSlots };
+      const currentDisabledRooms = h.disabledRooms || [];
+      const disabledRooms = currentDisabledRooms.includes(roomId)
+        ? currentDisabledRooms.filter(r => r !== roomId)
+        : [...currentDisabledRooms, roomId];
+      return { ...h, disabledRooms };
     });
     setHolidays(newHolidays);
     saveConfig(newHolidays, doctorDateExclusions);
@@ -247,11 +248,11 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
                         toggleHoliday(dateStr);
                       }
                     }}
-                    title={isWeekend ? 'Weekend' : isHoliday ? 'Festivo - clicca per configurare turni' : 'Clicca per segnare come festivo'}
+                    title={isWeekend ? 'Weekend' : isHoliday ? 'Festivo - clicca per configurare sale' : 'Clicca per segnare come festivo'}
                   >
                     {day}
-                    {isHoliday && holidayConfig!.disabledSlots.length > 0 && (
-                      <span className="disabled-indicator">{holidayConfig!.disabledSlots.length}</span>
+                    {isHoliday && (holidayConfig!.disabledRooms || []).length > 0 && (
+                      <span className="disabled-indicator">{(holidayConfig!.disabledRooms || []).length}</span>
                     )}
                   </button>
                 );
@@ -269,19 +270,20 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
                   🗑️ Rimuovi festivo
                 </button>
               </div>
-              <p className="config-hint">Seleziona i turni da disabilitare per questo giorno:</p>
-              <div className="slot-toggles">
-                {TIME_SLOTS.map(slot => {
+              <p className="config-hint">Seleziona le sale da disabilitare per questo giorno:</p>
+              <div className="room-toggles">
+                {rooms.map(room => {
                   const holidayConfig = getHolidayConfig(editingHoliday);
-                  const isDisabled = holidayConfig?.disabledSlots.includes(slot);
+                  const isDisabled = (holidayConfig?.disabledRooms || []).includes(room.id);
                   return (
                     <button
-                      key={slot}
-                      className={`slot-toggle ${isDisabled ? 'disabled-slot' : 'enabled-slot'}`}
-                      onClick={() => toggleHolidaySlot(editingHoliday, slot)}
+                      key={room.id}
+                      className={`room-toggle ${isDisabled ? 'disabled-room' : 'enabled-room'}`}
+                      style={{ borderColor: room.color }}
+                      onClick={() => toggleHolidayRoom(editingHoliday, room.id)}
                     >
-                      {TIME_SLOT_SHORT_LABELS[slot]}
-                      <span className="slot-status">{isDisabled ? '❌' : '✅'}</span>
+                      <span className="room-name">{room.name}</span>
+                      <span className="room-status">{isDisabled ? '❌' : '✅'}</span>
                     </button>
                   );
                 })}
@@ -301,8 +303,8 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
                     onClick={() => setEditingHoliday(holiday.date)}
                   >
                     {day} {monthNames[month - 1]}
-                    {holiday.disabledSlots.length > 0 && (
-                      <span className="disabled-count">-{holiday.disabledSlots.length}</span>
+                    {(holiday.disabledRooms || []).length > 0 && (
+                      <span className="disabled-count">-{(holiday.disabledRooms || []).length} sale</span>
                     )}
                   </span>
                 );

@@ -86,7 +86,7 @@ export interface Assignment {
 
 export interface HolidayConfig {
   date: string;
-  disabledSlots: TimeSlot[];
+  disabledRooms: string[];
 }
 
 export interface GenerationConfig {
@@ -103,11 +103,18 @@ export interface MonthlySchedule {
   assignments: Assignment[];
 }
 
+export const TIME_SLOT_HOURS: Record<TimeSlot, number> = {
+  '08:00-14:00': 6,
+  '14:00-20:00': 6,
+  '20:00-08:00': 12,
+};
+
 export interface DoctorStats {
   doctorId: string;
   doctorName: string;
   doctorColor: string;
   totalShifts: number;
+  totalHours: number;
   weekendShifts: number;
   criticalShifts: number;
   shiftsByRoom: Record<string, number>;

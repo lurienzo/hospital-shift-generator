@@ -576,6 +576,11 @@
   font-size: 0.875rem;
 }
 
+.hours-cell {
+  color: var(--primary);
+  font-weight: 600;
+}
+
 .weekend-cell {
   color: #f39c12;
   font-weight: 600;

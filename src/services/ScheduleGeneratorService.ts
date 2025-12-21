@@ -8,6 +8,7 @@ import {
   TimeSlot,
   TIME_SLOTS,
   TIME_SLOT_ORDER,
+  TIME_SLOT_HOURS,
   GenerationConfig,
   HolidayConfig,
   DayGroup,
@@ -67,12 +68,12 @@ export class ScheduleGeneratorService {
       const holidayConfig = holidayMap.get(dateStr);
 
       for (const room of this.rooms) {
+        if (holidayConfig && (holidayConfig.disabledRooms || []).includes(room.id)) {
+          continue;
+        }
+
         for (const slot of room.slots) {
           if (slot.weekday === weekday) {
-            if (holidayConfig && holidayConfig.disabledSlots.includes(slot.timeSlot)) {
-              continue;
-            }
-
             requirements.push({
               date: dateStr,
               roomId: room.id,
@@ -545,11 +546,16 @@ export class ScheduleGeneratorService {
         return criticalSlots.has(`${a.roomId}-${a.timeSlot}`);
       }).length;
 
+      const totalHours = doctorAssignments.reduce((sum, a) => {
+        return sum + TIME_SLOT_HOURS[a.timeSlot];
+      }, 0);
+
       return {
         doctorId: doctor.id,
         doctorName: doctor.name,
         doctorColor: doctor.color,
         totalShifts: doctorAssignments.length,
+        totalHours,
         weekendShifts,
         criticalShifts,
         shiftsByRoom,

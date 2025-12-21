@@ -477,7 +477,8 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
             <thead>
               <tr>
                 <th>Dottore</th>
-                <th>Totale</th>
+                <th>Turni</th>
+                <th>Ore</th>
                 <th className="weekend-header">Weekend</th>
                 {totalCriticalShifts > 0 && <th className="critical-header">Critici</th>}
                 {rooms.map(room => (
@@ -500,6 +501,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                   <td className="total-cell">
                     <span className="total-badge" style={{ background: stat.doctorColor }}>{stat.totalShifts}</span>
                   </td>
+                  <td className="hours-cell">{stat.totalHours}h</td>
                   <td className="weekend-cell">{stat.weekendShifts}</td>
                   {totalCriticalShifts > 0 && <td className="critical-cell">{stat.criticalShifts}</td>}
                   {rooms.map(room => (

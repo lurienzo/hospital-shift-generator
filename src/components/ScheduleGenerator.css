@@ -354,6 +354,44 @@
   font-size: 1rem;
 }
 
+.room-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.room-toggle {
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-width: 2px;
+  border-style: solid;
+}
+
+.room-toggle.enabled-room {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+}
+
+.room-toggle.disabled-room {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
+.room-toggle .room-name {
+  font-weight: 600;
+}
+
+.room-toggle .room-status {
+  font-size: 0.875rem;
+}
+
 .selected-holidays {
   margin-top: 1rem;
   padding-top: 1rem;
