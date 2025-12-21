@@ -550,12 +550,15 @@ export class ScheduleGeneratorService {
         return sum + TIME_SLOT_HOURS[a.timeSlot];
       }, 0);
 
+      const distinctDays = new Set(doctorAssignments.map(a => a.date)).size;
+
       return {
         doctorId: doctor.id,
         doctorName: doctor.name,
         doctorColor: doctor.color,
         totalShifts: doctorAssignments.length,
         totalHours,
+        distinctDays,
         weekendShifts,
         criticalShifts,
         shiftsByRoom,

@@ -115,6 +115,7 @@ export interface DoctorStats {
   doctorColor: string;
   totalShifts: number;
   totalHours: number;
+  distinctDays: number;
   weekendShifts: number;
   criticalShifts: number;
   shiftsByRoom: Record<string, number>;

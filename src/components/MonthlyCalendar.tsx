@@ -18,11 +18,32 @@ interface EditingCell {
   timeSlot: TimeSlot;
 }
 
+type CalendarView = 'rooms' | 'doctors';
+type SortColumn = 'name' | 'shifts' | 'days' | 'hours' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | string;
+type SortDirection = 'asc' | 'desc';
+
 export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: MonthlyCalendarProps) {
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [showAddModal, setShowAddModal] = useState<EditingCell | null>(null);
   const [draggingAssignment, setDraggingAssignment] = useState<string | null>(null);
   const [dragOverAssignment, setDragOverAssignment] = useState<string | null>(null);
+  const [calendarView, setCalendarView] = useState<CalendarView>('rooms');
+  const [sortColumn, setSortColumn] = useState<SortColumn>('shifts');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+  };
+
+  const getSortIndicator = (column: SortColumn) => {
+    if (sortColumn !== column) return '';
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  };
 
   const doctorDateExclusions = useMemo(() => {
     const config = StorageService.loadGenerationConfig(schedule.year, schedule.month);
@@ -359,9 +380,25 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
     <div className="monthly-calendar">
       <div className="calendar-header">
         <h2>{monthNames[schedule.month - 1]} {schedule.year}</h2>
-        <button className="btn-download" onClick={handleDownloadCSV}>
-          📥 Scarica CSV
-        </button>
+        <div className="calendar-header-actions">
+          <div className="view-toggle">
+            <button 
+              className={`view-toggle-btn ${calendarView === 'rooms' ? 'active' : ''}`}
+              onClick={() => setCalendarView('rooms')}
+            >
+              🏥 Per Sala
+            </button>
+            <button 
+              className={`view-toggle-btn ${calendarView === 'doctors' ? 'active' : ''}`}
+              onClick={() => setCalendarView('doctors')}
+            >
+              👨‍⚕️ Per Dottore
+            </button>
+          </div>
+          <button className="btn-download" onClick={handleDownloadCSV}>
+            📥 Scarica CSV
+          </button>
+        </div>
       </div>
 
       <div className="calendar-stats">
@@ -403,6 +440,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
         <span className="legend-tip">💡 Clicca su un turno per modificarlo, trascina per scambiare dottori, o premi + per aggiungere</span>
       </div>
 
+      {calendarView === 'rooms' && (
       <div className="calendar-table-container">
         <table className="calendar-table">
           <thead>
@@ -565,6 +603,108 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
           </tbody>
         </table>
       </div>
+      )}
+
+      {calendarView === 'doctors' && (
+      <div className="calendar-table-container">
+        <table className="calendar-table doctor-calendar">
+          <thead>
+            <tr>
+              <th className="sticky-col day-col">Giorno</th>
+              <th className="sticky-col weekday-col">Sett.</th>
+              {doctors.map(doctor => (
+                <th key={doctor.id} style={{ borderBottomColor: doctor.color }}>
+                  <span className="doctor-header">
+                    <span className="doctor-dot" style={{ backgroundColor: doctor.color }}></span>
+                    {doctor.name}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: daysInMonth }, (_, index) => {
+              const day = index + 1;
+              const date = new Date(schedule.year, schedule.month - 1, day);
+              const weekday = date.getDay();
+              const dateStr = `${schedule.year}-${String(schedule.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const { isWeekend, isHoliday } = isWeekendOrHoliday(dateStr);
+              const isWeekendOrHolidayDay = isWeekend || isHoliday;
+
+              return (
+                <tr key={day} className={isWeekendOrHolidayDay ? 'weekend-or-holiday-row' : ''}>
+                  <td className={`sticky-col day-col ${isWeekendOrHolidayDay ? 'weekend-day' : ''}`}>
+                    {day}
+                    {isHoliday && !isWeekend && <span className="holiday-marker">🎄</span>}
+                  </td>
+                  <td className={`sticky-col weekday-col ${isWeekendOrHolidayDay ? 'weekend-day' : ''}`}>
+                    {weekdayNames[weekday]}
+                  </td>
+                  {doctors.map(doctor => {
+                    const doctorAssignments = schedule.assignments
+                      .filter(a => a.date === dateStr && a.doctorId === doctor.id)
+                      .sort((a, b) => TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot]);
+                    
+                    const isOnVacation = isDoctorOnVacation(dateStr, doctor.id);
+                    const isOnRestDay = isDoctorOnRestDay(dateStr, doctor.id);
+
+                    return (
+                      <td 
+                        key={doctor.id} 
+                        className={`assignment-cell doctor-cell ${isOnVacation ? 'vacation-cell' : ''} ${isOnRestDay ? 'rest-cell' : ''}`}
+                        style={{ borderLeftColor: doctor.color + '40' }}
+                      >
+                        {isOnVacation && doctorAssignments.length === 0 && (
+                          <span className="cell-status vacation">🏖️</span>
+                        )}
+                        {isOnRestDay && !isOnVacation && doctorAssignments.length === 0 && (
+                          <span className="cell-status rest">😴</span>
+                        )}
+                        <div className="assignments doctor-assignments">
+                          {doctorAssignments.map((assignment) => {
+                            const room = rooms.find(r => r.id === assignment.roomId);
+                            const invalidReason = getAssignmentInvalidReason(assignment);
+                            const isDragging = draggingAssignment === assignment.id;
+                            const dragState = getDragOverState(assignment.id);
+                            
+                            return (
+                              <div
+                                key={assignment.id}
+                                className={`assignment-chip-mini ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${invalidReason ? 'has-warning' : ''}`}
+                                style={{ 
+                                  backgroundColor: room?.color + '30',
+                                  borderColor: room?.color
+                                }}
+                                draggable
+                                onDragStart={() => handleDragStart(assignment.id)}
+                                onDragEnd={handleDragEnd}
+                                onDragOver={(e) => handleDragOver(e, assignment.id)}
+                                onDragLeave={handleDragLeave}
+                                onDrop={(e) => handleDrop(e, assignment.id)}
+                                title={`${room?.name || ''} - ${TIME_SLOT_LABELS[assignment.timeSlot]}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
+                              >
+                                {invalidReason && <span className="invalid-icon-mini">⚠️</span>}
+                                {dragState.isOver && dragState.isBlocked && (
+                                  <div className="drag-tooltip drag-tooltip-blocked">
+                                    ❌ {dragState.blockReason}
+                                  </div>
+                                )}
+                                <span className="room-abbr">{room?.name?.slice(0, 3) || '?'}</span>
+                                <span className="time-slot-mini">{assignment.timeSlot.split('-')[0]}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      )}
 
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(null)}>
@@ -648,23 +788,82 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
           <table className="stats-table">
             <thead>
               <tr>
-                <th>Dottore</th>
-                <th>Turni</th>
-                <th>Ore</th>
-                <th className="weekend-header">Weekend</th>
-                {totalCriticalShifts > 0 && <th className="critical-header">Critici</th>}
+                <th className="sortable" onClick={() => handleSort('name')}>Dottore{getSortIndicator('name')}</th>
+                <th className="sortable" onClick={() => handleSort('shifts')}>Turni{getSortIndicator('shifts')}</th>
+                <th className="sortable" onClick={() => handleSort('days')}>Giorni{getSortIndicator('days')}</th>
+                <th className="sortable" onClick={() => handleSort('hours')}>Ore{getSortIndicator('hours')}</th>
+                <th className="weekend-header sortable" onClick={() => handleSort('weekend')}>Weekend{getSortIndicator('weekend')}</th>
+                {totalCriticalShifts > 0 && <th className="critical-header sortable" onClick={() => handleSort('critical')}>Critici{getSortIndicator('critical')}</th>}
                 {rooms.map(room => (
-                  <th key={room.id}>
-                    {room.name}
+                  <th key={room.id} className="sortable" onClick={() => handleSort(`room-${room.id}`)}>
+                    {room.name}{getSortIndicator(`room-${room.id}`)}
                   </th>
                 ))}
-                <th>Mattina</th>
-                <th>Pomeriggio</th>
-                <th>Notte</th>
+                <th className="timeslot-header separator-left sortable" onClick={() => handleSort('morning')}>🌅 Matt.{getSortIndicator('morning')}</th>
+                <th className="timeslot-header sortable" onClick={() => handleSort('afternoon')}>🌇 Pom.{getSortIndicator('afternoon')}</th>
+                <th className="timeslot-header sortable" onClick={() => handleSort('night')}>🌙 Notte{getSortIndicator('night')}</th>
               </tr>
             </thead>
             <tbody>
-              {stats.sort((a, b) => b.totalShifts - a.totalShifts).map(stat => (
+              {[...stats].sort((a, b) => {
+                let aValue: number | string = 0;
+                let bValue: number | string = 0;
+                
+                switch (sortColumn) {
+                  case 'name':
+                    aValue = a.doctorName.toLowerCase();
+                    bValue = b.doctorName.toLowerCase();
+                    break;
+                  case 'shifts':
+                    aValue = a.totalShifts;
+                    bValue = b.totalShifts;
+                    break;
+                  case 'days':
+                    aValue = a.distinctDays;
+                    bValue = b.distinctDays;
+                    break;
+                  case 'hours':
+                    aValue = a.totalHours;
+                    bValue = b.totalHours;
+                    break;
+                  case 'weekend':
+                    aValue = a.weekendShifts;
+                    bValue = b.weekendShifts;
+                    break;
+                  case 'critical':
+                    aValue = a.criticalShifts;
+                    bValue = b.criticalShifts;
+                    break;
+                  case 'morning':
+                    aValue = a.shiftsByTimeSlot['08:00-14:00'];
+                    bValue = b.shiftsByTimeSlot['08:00-14:00'];
+                    break;
+                  case 'afternoon':
+                    aValue = a.shiftsByTimeSlot['14:00-20:00'];
+                    bValue = b.shiftsByTimeSlot['14:00-20:00'];
+                    break;
+                  case 'night':
+                    aValue = a.shiftsByTimeSlot['20:00-08:00'];
+                    bValue = b.shiftsByTimeSlot['20:00-08:00'];
+                    break;
+                  default:
+                    if (sortColumn.startsWith('room-')) {
+                      const roomId = sortColumn.replace('room-', '');
+                      aValue = a.shiftsByRoom[roomId] || 0;
+                      bValue = b.shiftsByRoom[roomId] || 0;
+                    }
+                }
+                
+                if (typeof aValue === 'string' && typeof bValue === 'string') {
+                  return sortDirection === 'asc' 
+                    ? aValue.localeCompare(bValue) 
+                    : bValue.localeCompare(aValue);
+                }
+                
+                return sortDirection === 'asc' 
+                  ? (aValue as number) - (bValue as number) 
+                  : (bValue as number) - (aValue as number);
+              }).map(stat => (
                 <tr key={stat.doctorId}>
                   <td className="doctor-name-cell">
                     <span className="doctor-dot" style={{ backgroundColor: stat.doctorColor }}></span>
@@ -673,6 +872,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                   <td className="total-cell">
                     <span className="total-badge" style={{ background: stat.doctorColor }}>{stat.totalShifts}</span>
                   </td>
+                  <td className="days-cell">{stat.distinctDays}</td>
                   <td className="hours-cell">{stat.totalHours}h</td>
                   <td className="weekend-cell">{stat.weekendShifts}</td>
                   {totalCriticalShifts > 0 && <td className="critical-cell">{stat.criticalShifts}</td>}
@@ -681,9 +881,9 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                       {stat.shiftsByRoom[room.id] || 0}
                     </td>
                   ))}
-                  <td>{stat.shiftsByTimeSlot['08:00-14:00']}</td>
-                  <td>{stat.shiftsByTimeSlot['14:00-20:00']}</td>
-                  <td>{stat.shiftsByTimeSlot['20:00-08:00']}</td>
+                  <td className="timeslot-cell separator-left">{stat.shiftsByTimeSlot['08:00-14:00']}</td>
+                  <td className="timeslot-cell">{stat.shiftsByTimeSlot['14:00-20:00']}</td>
+                  <td className="timeslot-cell">{stat.shiftsByTimeSlot['20:00-08:00']}</td>
                 </tr>
               ))}
             </tbody>

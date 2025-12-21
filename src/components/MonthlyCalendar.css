@@ -34,6 +34,40 @@
   box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
 }
 
+.calendar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.view-toggle {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.view-toggle-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.view-toggle-btn:hover {
+  background: var(--surface-elevated);
+}
+
+.view-toggle-btn.active {
+  background: var(--primary);
+  color: white;
+}
+
 .calendar-stats {
   display: flex;
   gap: 1rem;
@@ -212,6 +246,8 @@
   cursor: pointer;
   transition: all 0.15s;
   position: relative;
+  background-color: var(--surface) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
 .assignment-chip:hover {
@@ -663,6 +699,26 @@
   font-weight: 600;
 }
 
+.days-cell {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.timeslot-header {
+  background: rgba(99, 102, 241, 0.1) !important;
+  color: var(--primary);
+  font-size: 0.75rem;
+}
+
+.timeslot-cell {
+  background: rgba(99, 102, 241, 0.03);
+  color: var(--text-muted);
+}
+
+.separator-left {
+  border-left: 2px solid var(--primary) !important;
+}
+
 .weekend-cell {
   color: #f39c12;
   font-weight: 600;
@@ -675,6 +731,16 @@
 
 .stats-table tbody tr:hover {
   background: var(--surface-elevated);
+}
+
+.stats-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.stats-table th.sortable:hover {
+  background: rgba(99, 102, 241, 0.2);
 }
 
 /* Warning stat card */
@@ -717,4 +783,96 @@
 
 .doctor-select-btn.has-warning {
   border-style: dashed;
+}
+
+/* Doctor Calendar View */
+.doctor-calendar th {
+  border-bottom: 3px solid var(--border);
+}
+
+.doctor-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.doctor-cell {
+  border-left: 2px solid;
+  min-width: 100px;
+}
+
+.doctor-cell.vacation-cell {
+  background: rgba(243, 156, 18, 0.08);
+}
+
+.doctor-cell.rest-cell {
+  background: rgba(155, 89, 182, 0.08);
+}
+
+.cell-status {
+  display: block;
+  text-align: center;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.doctor-assignments {
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.assignment-chip-mini {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border-left: 2px solid;
+  font-size: 0.6875rem;
+  cursor: grab;
+  transition: all 0.15s;
+  position: relative;
+  background-color: var(--surface) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.assignment-chip-mini:hover {
+  transform: translateX(2px);
+}
+
+.assignment-chip-mini.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+.assignment-chip-mini.drag-over {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.assignment-chip-mini.drag-blocked {
+  transform: scale(0.95);
+  box-shadow: 0 0 0 2px #e74c3c;
+  cursor: not-allowed;
+}
+
+.assignment-chip-mini.has-warning {
+  opacity: 0.8;
+}
+
+.room-abbr {
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+}
+
+.time-slot-mini {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+}
+
+.invalid-icon-mini {
+  font-size: 0.625rem;
+  margin-right: 2px;
 }
