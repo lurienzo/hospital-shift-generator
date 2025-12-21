@@ -365,25 +365,123 @@
   font-size: 0.75rem;
 }
 
-/* Day Groups Section */
-.day-groups-section {
+/* Rotation Constraints Section */
+.rotation-constraints-section {
   margin-top: 1.5rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--border);
 }
 
-.day-groups-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
-.day-groups-header h4 {
-  margin: 0;
+.rotation-constraints-section > h4 {
+  margin: 0 0 0.5rem 0;
   font-size: 0.9375rem;
   font-weight: 600;
   color: var(--text);
+}
+
+.section-description {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0 0 1rem 0;
+}
+
+.constraint-option {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: var(--surface-elevated);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.constraint-option.active {
+  border-color: var(--primary);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.constraint-option.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.constraint-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.constraint-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.constraint-info {
+  flex: 1;
+}
+
+.constraint-info h5 {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.constraint-info p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.constraint-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  margin-left: 2rem;
+}
+
+.constraint-input input[type="number"] {
+  width: 100px;
+  padding: 0.5rem 0.75rem;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color 0.2s;
+}
+
+.constraint-input input[type="number"]:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.constraint-input input[type="number"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-clear {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.btn-clear:hover {
+  background: #e74c3c;
+  border-color: #e74c3c;
+  color: white;
 }
 
 .btn-add-group {
@@ -396,39 +494,38 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
+  margin-left: auto;
 }
 
 .btn-add-group:hover {
   opacity: 0.9;
 }
 
-.day-groups-hint {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin: 0 0 1rem 0;
+.btn-add-group:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.no-groups {
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-  font-style: italic;
+.day-groups-list {
+  margin-top: 0.75rem;
+  margin-left: 2rem;
 }
 
 .day-group-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  padding: 0.75rem;
-  background: var(--surface-elevated);
-  border-radius: 8px;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border-radius: 6px;
 }
 
 .group-index {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-muted);
-  min-width: 70px;
+  min-width: 60px;
 }
 
 .group-days {
@@ -438,11 +535,11 @@
 }
 
 .day-toggle {
-  padding: 0.375rem 0.5rem;
-  background: var(--surface);
+  padding: 0.25rem 0.4rem;
+  background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.2s;
@@ -464,7 +561,7 @@
   background: transparent;
   border: none;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   opacity: 0.5;
   transition: opacity 0.2s;
 }

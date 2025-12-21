@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig } from '../models/types';
-import { ScheduleGeneratorService } from '../services/ScheduleGeneratorService';
+import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import './ScheduleGenerator.css';
 
@@ -15,6 +15,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
   const [year, setYear] = useState(currentDate.getFullYear());
   const [month, setMonth] = useState(currentDate.getMonth() + 1);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
   const [holidays, setHolidays] = useState<HolidayConfig[]>([]);
   const [doctorDateExclusions, setDoctorDateExclusions] = useState<Record<string, string[]>>({});
   const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null);
@@ -110,23 +111,33 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
     saveConfig(holidays, newDoctorDateExclusions);
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!canGenerate) return;
 
     setIsGenerating(true);
+    setGenerationProgress(null);
 
-    setTimeout(() => {
-      const config: GenerationConfig = {
-        year,
-        month,
-        holidays,
-        doctorDateExclusions,
-      };
-      const generator = new ScheduleGeneratorService(rooms, doctors, config);
-      const schedule = generator.generate();
-      onScheduleGenerated(schedule);
+    const config: GenerationConfig = {
+      year,
+      month,
+      holidays,
+      doctorDateExclusions,
+    };
+    const generator = new ScheduleGeneratorService(rooms, doctors, config);
+    
+    try {
+      const result = await generator.generateOptimized(10000, (progress) => {
+        setGenerationProgress(progress);
+      });
+      onScheduleGenerated(result.schedule);
+    } catch (error) {
+      console.error('Generation error:', error);
+      const fallback = generator.generate();
+      onScheduleGenerated(fallback);
+    } finally {
       setIsGenerating(false);
-    }, 300);
+      setGenerationProgress(null);
+    }
   };
 
   const handleMonthChange = (newMonth: number) => {
@@ -177,13 +188,35 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
           {isGenerating ? (
             <>
               <span className="spinner"></span>
-              Generazione...
+              Ottimizzazione...
             </>
           ) : (
-            '⚡ Genera Calendario'
+            '⚡ Genera Calendario Ottimizzato'
           )}
         </button>
       </div>
+
+      {isGenerating && generationProgress && (
+        <div className="generation-progress">
+          <div className="progress-header">
+            <span className="progress-title">🔄 Generazione in corso...</span>
+            <span className="progress-percentage">{generationProgress.percentage}%</span>
+          </div>
+          <div className="progress-bar-container">
+            <div 
+              className="progress-bar-fill" 
+              style={{ width: `${generationProgress.percentage}%` }}
+            ></div>
+          </div>
+          <div className="progress-stats">
+            <span>📊 {generationProgress.current.toLocaleString()} / {generationProgress.total.toLocaleString()} tentativi</span>
+            <span>✅ {generationProgress.validSchedules} schedules valide</span>
+            {generationProgress.bestCost !== null && (
+              <span>🎯 Costo migliore: {generationProgress.bestCost.toFixed(2)}</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {!canGenerate && (
         <div className="generator-warnings">

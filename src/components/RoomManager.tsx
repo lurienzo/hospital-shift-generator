@@ -198,6 +198,15 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
     );
   };
 
+  const updateConsecutiveShifts = (roomId: string, value: number | undefined) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        return { ...room, consecutiveShifts: value };
+      })
+    );
+  };
+
   const addMultipleSlots = (roomId: string, weekdays: Weekday[], timeSlots: TimeSlot[]) => {
     onRoomsChange(
       rooms.map(room => {
@@ -406,42 +415,90 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                   </span>
                 </div>
 
-                <div className="day-groups-section">
-                  <div className="day-groups-header">
-                    <h4>🔗 Gruppi Giorni Consecutivi</h4>
-                    <button className="btn-add-group" onClick={() => addDayGroup(room.id)}>
-                      + Nuovo Gruppo
-                    </button>
-                  </div>
-                  <p className="day-groups-hint">
-                    I medici assegnati a un giorno del gruppo lavoreranno tutti i giorni del gruppo.
+                <div className="rotation-constraints-section">
+                  <h4>🔄 Vincoli di Rotazione</h4>
+                  <p className="section-description">
+                    Scegli UNA delle due modalità per gestire la continuità dei medici in questa sala.
                   </p>
-                  {(room.dayGroups || []).length === 0 && (
-                    <p className="no-groups">Nessun gruppo definito</p>
-                  )}
-                  {(room.dayGroups || []).map((group, index) => (
-                    <div key={group.id} className="day-group-row">
-                      <span className="group-index">Gruppo {index + 1}:</span>
-                      <div className="group-days">
-                        {WEEKDAYS.map(weekday => (
-                          <button
-                            key={weekday}
-                            className={`day-toggle ${group.days.includes(weekday) ? 'active' : ''}`}
-                            onClick={() => toggleDayInGroup(room.id, group.id, weekday)}
-                          >
-                            {WEEKDAY_LABELS[weekday].slice(0, 3)}
-                          </button>
-                        ))}
+
+                  {/* Consecutive Shifts */}
+                  <div className={`constraint-option ${room.consecutiveShifts ? 'active' : ''} ${(room.dayGroups || []).length > 0 ? 'disabled' : ''}`}>
+                    <div className="constraint-header">
+                      <span className="constraint-icon">📊</span>
+                      <div className="constraint-info">
+                        <h5>Turni Consecutivi</h5>
+                        <p>Ogni medico lavora N turni consecutivi (in ordine cronologico sulla timetable) prima di passare al successivo.</p>
+                      </div>
+                    </div>
+                    <div className="constraint-input">
+                      <input
+                        type="number"
+                        min="0"
+                        max="20"
+                        value={room.consecutiveShifts || ''}
+                        placeholder="N turni"
+                        onChange={(event) => {
+                          const value = event.target.value ? parseInt(event.target.value, 10) : undefined;
+                          updateConsecutiveShifts(room.id, value && value > 0 ? value : undefined);
+                        }}
+                        disabled={(room.dayGroups || []).length > 0}
+                      />
+                      {room.consecutiveShifts && (
+                        <button
+                          className="btn-clear"
+                          onClick={() => updateConsecutiveShifts(room.id, undefined)}
+                          title="Rimuovi vincolo"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Day Groups */}
+                  <div className={`constraint-option ${(room.dayGroups || []).length > 0 ? 'active' : ''} ${room.consecutiveShifts ? 'disabled' : ''}`}>
+                    <div className="constraint-header">
+                      <span className="constraint-icon">🔗</span>
+                      <div className="constraint-info">
+                        <h5>Gruppi Giorni Consecutivi</h5>
+                        <p>I medici assegnati a un giorno del gruppo lavoreranno tutti i giorni del gruppo (es. Mar-Mer-Gio).</p>
                       </div>
                       <button
-                        className="btn-remove-group"
-                        onClick={() => removeDayGroup(room.id, group.id)}
-                        title="Rimuovi gruppo"
+                        className="btn-add-group"
+                        onClick={() => addDayGroup(room.id)}
+                        disabled={!!room.consecutiveShifts}
                       >
-                        🗑️
+                        + Nuovo Gruppo
                       </button>
                     </div>
-                  ))}
+                    {(room.dayGroups || []).length > 0 && (
+                      <div className="day-groups-list">
+                        {(room.dayGroups || []).map((group, index) => (
+                          <div key={group.id} className="day-group-row">
+                            <span className="group-index">Gruppo {index + 1}:</span>
+                            <div className="group-days">
+                              {WEEKDAYS.map(weekday => (
+                                <button
+                                  key={weekday}
+                                  className={`day-toggle ${group.days.includes(weekday) ? 'active' : ''}`}
+                                  onClick={() => toggleDayInGroup(room.id, group.id, weekday)}
+                                >
+                                  {WEEKDAY_LABELS[weekday].slice(0, 3)}
+                                </button>
+                              ))}
+                            </div>
+                            <button
+                              className="btn-remove-group"
+                              onClick={() => removeDayGroup(room.id, group.id)}
+                              title="Rimuovi gruppo"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -457,6 +514,9 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                 )}
                 {room.slots.some(s => s.isFullDayExclusive) && (
                   <span className="summary-badge">🚫 {room.slots.filter(s => s.isFullDayExclusive).length}</span>
+                )}
+                {room.consecutiveShifts && (
+                  <span className="summary-badge">📊 {room.consecutiveShifts} turni cons.</span>
                 )}
                 {(room.dayGroups || []).length > 0 && (
                   <span className="summary-badge">🔗 {room.dayGroups.length} gruppi</span>

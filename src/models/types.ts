@@ -57,6 +57,7 @@ export interface OperativeRoom {
   color: string;
   slots: ScheduleSlot[];
   dayGroups: DayGroup[];
+  consecutiveShifts?: number; // Number of consecutive shifts per doctor (alternative to dayGroups)
 }
 
 export const DOCTOR_COLORS = [
