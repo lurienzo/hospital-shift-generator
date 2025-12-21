@@ -73,12 +73,15 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
           };
         }
 
+        const isNightShift = timeSlot === '20:00-08:00';
         const newSlot: ScheduleSlot = {
           id: generateId(),
           weekday,
           timeSlot,
           requiredDoctors: 1,
-          isCritical: timeSlot === '20:00-08:00',
+          isCritical: isNightShift,
+          requiresNextDayRest: isNightShift,
+          isFullDayExclusive: isNightShift,
         };
 
         return { ...room, slots: [...room.slots, newSlot] };
@@ -122,6 +125,34 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
     );
   };
 
+  const toggleNextDayRest = (roomId: string, slotId: string) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        return {
+          ...room,
+          slots: room.slots.map(slot =>
+            slot.id === slotId ? { ...slot, requiresNextDayRest: !slot.requiresNextDayRest } : slot
+          ),
+        };
+      })
+    );
+  };
+
+  const toggleFullDayExclusive = (roomId: string, slotId: string) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        return {
+          ...room,
+          slots: room.slots.map(slot =>
+            slot.id === slotId ? { ...slot, isFullDayExclusive: !slot.isFullDayExclusive } : slot
+          ),
+        };
+      })
+    );
+  };
+
   const addMultipleSlots = (roomId: string, weekdays: Weekday[], timeSlots: TimeSlot[]) => {
     onRoomsChange(
       rooms.map(room => {
@@ -141,12 +172,15 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                 requiredDoctors: updatedSlots[existingSlotIndex].requiredDoctors + 1,
               };
             } else {
+              const isNightShift = timeSlot === '20:00-08:00';
               updatedSlots.push({
                 id: generateId(),
                 weekday,
                 timeSlot,
                 requiredDoctors: 1,
-                isCritical: timeSlot === '20:00-08:00',
+                isCritical: isNightShift,
+                requiresNextDayRest: isNightShift,
+                isFullDayExclusive: isNightShift,
               });
             }
           }
@@ -262,7 +296,7 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                           return (
                             <td
                               key={`${weekday}-${timeSlot}`}
-                              className={`schedule-cell ${slot ? 'active' : ''} ${isWeekend ? 'weekend-cell' : ''} ${slot?.isCritical ? 'critical' : ''}`}
+                              className={`schedule-cell ${slot ? 'active' : ''} ${isWeekend ? 'weekend-cell' : ''} ${slot?.isCritical ? 'critical' : ''} ${slot?.requiresNextDayRest ? 'rest-required' : ''} ${slot?.isFullDayExclusive ? 'full-day-exclusive' : ''}`}
                               style={slot ? { backgroundColor: room.color + '40' } : {}}
                             >
                               {slot ? (
@@ -272,13 +306,29 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                                     <button onClick={() => addSlot(room.id, weekday, timeSlot)}>+</button>
                                     <button onClick={() => removeSlot(room.id, slot.id)}>−</button>
                                   </div>
-                                  <button
-                                    className={`btn-critical ${slot.isCritical ? 'active' : ''}`}
-                                    onClick={() => toggleCritical(room.id, slot.id)}
-                                    title={slot.isCritical ? 'Turno critico (bilanciato)' : 'Segna come critico'}
-                                  >
-                                    ⚠️
-                                  </button>
+                                  <div className="slot-flags">
+                                    <button
+                                      className={`btn-flag ${slot.isCritical ? 'active' : ''}`}
+                                      onClick={() => toggleCritical(room.id, slot.id)}
+                                      title={slot.isCritical ? 'Turno critico (bilanciato)' : 'Segna come critico'}
+                                    >
+                                      ⚠️
+                                    </button>
+                                    <button
+                                      className={`btn-flag ${slot.requiresNextDayRest ? 'active' : ''}`}
+                                      onClick={() => toggleNextDayRest(room.id, slot.id)}
+                                      title={slot.requiresNextDayRest ? 'Smontante: riposo giorno dopo' : 'Segna come smontante'}
+                                    >
+                                      😴
+                                    </button>
+                                    <button
+                                      className={`btn-flag ${slot.isFullDayExclusive ? 'active' : ''}`}
+                                      onClick={() => toggleFullDayExclusive(room.id, slot.id)}
+                                      title={slot.isFullDayExclusive ? 'Esclusivo: nessun altro turno nel giorno' : 'Segna come esclusivo'}
+                                    >
+                                      🚫
+                                    </button>
+                                  </div>
                                 </div>
                               ) : (
                                 <button
@@ -298,8 +348,16 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
 
                 <div className="schedule-legend">
                   <span className="legend-item">
-                    <span className="legend-icon critical">⚠️</span>
-                    Turno critico (bilanciato tra dottori)
+                    <span className="legend-icon">⚠️</span>
+                    Critico
+                  </span>
+                  <span className="legend-item">
+                    <span className="legend-icon">😴</span>
+                    Smontante
+                  </span>
+                  <span className="legend-item">
+                    <span className="legend-icon">🚫</span>
+                    Esclusivo
                   </span>
                 </div>
               </div>
@@ -309,7 +367,13 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
               <div className="room-summary">
                 {room.slots.reduce((sum, slot) => sum + slot.requiredDoctors, 0)} turni/settimana
                 {room.slots.some(s => s.isCritical) && (
-                  <span className="critical-badge">⚠️ {room.slots.filter(s => s.isCritical).length} critici</span>
+                  <span className="summary-badge">⚠️ {room.slots.filter(s => s.isCritical).length}</span>
+                )}
+                {room.slots.some(s => s.requiresNextDayRest) && (
+                  <span className="summary-badge">😴 {room.slots.filter(s => s.requiresNextDayRest).length}</span>
+                )}
+                {room.slots.some(s => s.isFullDayExclusive) && (
+                  <span className="summary-badge">🚫 {room.slots.filter(s => s.isFullDayExclusive).length}</span>
                 )}
               </div>
             )}

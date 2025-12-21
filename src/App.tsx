@@ -11,15 +11,19 @@ type Tab = 'rooms' | 'doctors' | 'generate' | 'calendar';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('rooms');
-  const [rooms, setRooms] = useState<OperativeRoom[]>([]);
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [schedule, setSchedule] = useState<MonthlySchedule | null>(null);
+  const [rooms, setRooms] = useState<OperativeRoom[]>(() => StorageService.loadRooms());
+  const [doctors, setDoctors] = useState<Doctor[]>(() => StorageService.loadDoctors());
+  const [schedule, setSchedule] = useState<MonthlySchedule | null>(() => StorageService.loadSchedule());
 
-  useEffect(() => {
-    setRooms(StorageService.loadRooms());
-    setDoctors(StorageService.loadDoctors());
-    setSchedule(StorageService.loadSchedule());
-  }, []);
+  const handleReset = () => {
+    if (window.confirm('Sei sicuro di voler cancellare tutti i dati? Questa azione non può essere annullata.')) {
+      StorageService.clearAll();
+      setRooms([]);
+      setDoctors([]);
+      setSchedule(null);
+      setActiveTab('rooms');
+    }
+  };
 
   useEffect(() => {
     StorageService.saveRooms(rooms);
@@ -57,6 +61,9 @@ function App() {
             <span className="subtitle">Generatore Automatico</span>
           </div>
         </div>
+        <button className="btn-reset" onClick={handleReset} title="Cancella tutti i dati">
+          🗑️ Reset
+        </button>
       </header>
 
       <nav className="app-nav">
@@ -111,4 +118,3 @@ function App() {
 }
 
 export default App;
-

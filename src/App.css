@@ -36,9 +36,29 @@ body {
 }
 
 .app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 1.25rem 2rem;
   background: linear-gradient(135deg, var(--surface) 0%, var(--surface-elevated) 100%);
   border-bottom: 1px solid var(--border);
+}
+
+.btn-reset {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #ef4444;
+  background: transparent;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-reset:hover {
+  background: #ef4444;
+  color: white;
 }
 
 .logo {

@@ -21,6 +21,8 @@ interface SlotRequirement {
   count: number;
   isWeekendOrHoliday: boolean;
   isCritical: boolean;
+  requiresNextDayRest: boolean;
+  isFullDayExclusive: boolean;
 }
 
 export class ScheduleGeneratorService {
@@ -77,6 +79,8 @@ export class ScheduleGeneratorService {
               count: slot.requiredDoctors,
               isWeekendOrHoliday,
               isCritical: slot.isCritical,
+              requiresNextDayRest: slot.requiresNextDayRest,
+              isFullDayExclusive: slot.isFullDayExclusive,
             });
           }
         }
@@ -106,6 +110,8 @@ export class ScheduleGeneratorService {
     const doctorRoomCounts: Map<string, Map<string, number>> = new Map();
     const doctorTimeSlotCounts: Map<string, Map<TimeSlot, number>> = new Map();
     const doctorLastRoom: Map<string, Map<string, string>> = new Map();
+    const doctorRestDays: Map<string, Set<string>> = new Map();
+    const doctorExclusiveDays: Map<string, Set<string>> = new Map();
 
     for (const doctor of this.doctors) {
       doctorShiftCounts.set(doctor.id, 0);
@@ -114,6 +120,8 @@ export class ScheduleGeneratorService {
       doctorRoomCounts.set(doctor.id, new Map());
       doctorTimeSlotCounts.set(doctor.id, new Map());
       doctorLastRoom.set(doctor.id, new Map());
+      doctorRestDays.set(doctor.id, new Set());
+      doctorExclusiveDays.set(doctor.id, new Set());
       for (const room of this.rooms) {
         doctorRoomCounts.get(doctor.id)!.set(room.id, 0);
       }
@@ -162,14 +170,14 @@ export class ScheduleGeneratorService {
       for (const requirement of sortedCritical) {
         this.assignToRequirement(
           requirement, assignments, doctorShiftCounts, doctorWeekendCounts,
-          doctorCriticalCounts, doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom
+          doctorCriticalCounts, doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays
         );
       }
 
       for (const requirement of sortedNonCritical) {
         this.assignToRequirement(
           requirement, assignments, doctorShiftCounts, doctorWeekendCounts,
-          doctorCriticalCounts, doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom
+          doctorCriticalCounts, doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays
         );
       }
     }
@@ -189,7 +197,9 @@ export class ScheduleGeneratorService {
     doctorCriticalCounts: Map<string, number>,
     doctorRoomCounts: Map<string, Map<string, number>>,
     doctorTimeSlotCounts: Map<string, Map<TimeSlot, number>>,
-    doctorLastRoom: Map<string, Map<string, string>>
+    doctorLastRoom: Map<string, Map<string, string>>,
+    doctorRestDays: Map<string, Set<string>>,
+    doctorExclusiveDays: Map<string, Set<string>>
   ): void {
     const date = new Date(requirement.date);
     const weekday = this.getWeekday(date);
@@ -201,12 +211,25 @@ export class ScheduleGeneratorService {
       const doctorExcludedDates = this.config.doctorDateExclusions[doctor.id] || [];
       if (doctorExcludedDates.includes(requirement.date)) return false;
 
+      const restDays = doctorRestDays.get(doctor.id)!;
+      if (restDays.has(requirement.date)) return false;
+
+      const exclusiveDays = doctorExclusiveDays.get(doctor.id)!;
+      if (exclusiveDays.has(requirement.date)) return false;
+
       const alreadyAssignedSameSlot = assignments.some(
         assignment => assignment.date === requirement.date &&
           assignment.doctorId === doctor.id &&
           assignment.timeSlot === requirement.timeSlot
       );
       if (alreadyAssignedSameSlot) return false;
+
+      if (requirement.isFullDayExclusive) {
+        const hasOtherShiftsSameDay = assignments.some(
+          assignment => assignment.date === requirement.date && assignment.doctorId === doctor.id
+        );
+        if (hasOtherShiftsSameDay) return false;
+      }
 
       return true;
     });
@@ -272,6 +295,17 @@ export class ScheduleGeneratorService {
       timeSlotCounts.set(requirement.timeSlot, (timeSlotCounts.get(requirement.timeSlot) || 0) + 1);
 
       doctorLastRoom.get(doctor.id)!.set(requirement.date, requirement.roomId);
+
+      if (requirement.requiresNextDayRest) {
+        const nextDay = new Date(requirement.date);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+        doctorRestDays.get(doctor.id)!.add(nextDayStr);
+      }
+
+      if (requirement.isFullDayExclusive) {
+        doctorExclusiveDays.get(doctor.id)!.add(requirement.date);
+      }
     }
   }
 

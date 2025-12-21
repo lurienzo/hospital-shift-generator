@@ -1,10 +1,18 @@
-import { OperativeRoom, Doctor, MonthlySchedule } from '../models/types';
+import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig } from '../models/types';
 
 const STORAGE_KEYS = {
   ROOMS: 'hospital_shift_rooms',
   DOCTORS: 'hospital_shift_doctors',
   SCHEDULE: 'hospital_shift_schedule',
+  GENERATION_CONFIG: 'hospital_shift_generation_config',
 };
+
+export interface StoredGenerationConfig {
+  year: number;
+  month: number;
+  holidays: HolidayConfig[];
+  doctorDateExclusions: Record<string, string[]>;
+}
 
 export class StorageService {
   static saveRooms(rooms: OperativeRoom[]): void {
@@ -32,6 +40,24 @@ export class StorageService {
   static loadSchedule(): MonthlySchedule | null {
     const data = localStorage.getItem(STORAGE_KEYS.SCHEDULE);
     return data ? JSON.parse(data) : null;
+  }
+
+  static saveGenerationConfig(config: StoredGenerationConfig): void {
+    const allConfigs = this.loadAllGenerationConfigs();
+    const key = `${config.year}-${config.month}`;
+    allConfigs[key] = config;
+    localStorage.setItem(STORAGE_KEYS.GENERATION_CONFIG, JSON.stringify(allConfigs));
+  }
+
+  static loadGenerationConfig(year: number, month: number): StoredGenerationConfig | null {
+    const allConfigs = this.loadAllGenerationConfigs();
+    const key = `${year}-${month}`;
+    return allConfigs[key] || null;
+  }
+
+  private static loadAllGenerationConfigs(): Record<string, StoredGenerationConfig> {
+    const data = localStorage.getItem(STORAGE_KEYS.GENERATION_CONFIG);
+    return data ? JSON.parse(data) : {};
   }
 
   static exportToCSV(schedule: MonthlySchedule, rooms: OperativeRoom[]): string {
@@ -68,5 +94,11 @@ export class StorageService {
     link.download = `turni_${schedule.year}_${schedule.month}.csv`;
     link.click();
   }
-}
 
+  static clearAll(): void {
+    localStorage.removeItem(STORAGE_KEYS.ROOMS);
+    localStorage.removeItem(STORAGE_KEYS.DOCTORS);
+    localStorage.removeItem(STORAGE_KEYS.SCHEDULE);
+    localStorage.removeItem(STORAGE_KEYS.GENERATION_CONFIG);
+  }
+}

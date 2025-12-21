@@ -19,6 +19,9 @@ interface EditingCell {
 }
 
 export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: MonthlyCalendarProps) {
+  // #region agent log
+  fetch('http://127.0.0.1:7245/ingest/3c4029e3-53eb-4a89-b9ae-b785c8e77d39',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MonthlyCalendar.tsx:22',message:'MonthlyCalendar component mounting',data:{assignmentsCount:schedule.assignments.length,roomsCount:rooms.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [showAddModal, setShowAddModal] = useState<EditingCell | null>(null);
 
@@ -54,10 +57,119 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
     onScheduleChange({ ...schedule, assignments: newAssignments });
   };
 
+  const isDoctorAlreadyAssigned = (date: string, timeSlot: TimeSlot, doctorId: string, excludeAssignmentId?: string): boolean => {
+    return schedule.assignments.some(
+      a => a.date === date && 
+           a.timeSlot === timeSlot && 
+           a.doctorId === doctorId &&
+           a.id !== excludeAssignmentId
+    );
+  };
+
+  const isDoctorOnRestDay = (date: string, doctorId: string): boolean => {
+    const currentDate = new Date(date);
+    const previousDate = new Date(currentDate);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const previousDateStr = `${previousDate.getFullYear()}-${String(previousDate.getMonth() + 1).padStart(2, '0')}-${String(previousDate.getDate()).padStart(2, '0')}`;
+
+    const previousDayAssignments = schedule.assignments.filter(
+      a => a.date === previousDateStr && a.doctorId === doctorId
+    );
+
+    for (const assignment of previousDayAssignments) {
+      const room = rooms.find(r => r.id === assignment.roomId);
+      if (room) {
+        const slot = room.slots.find(s => s.timeSlot === assignment.timeSlot);
+        if (slot?.requiresNextDayRest) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const getDoctorUnavailabilityReason = (date: string, timeSlot: TimeSlot, doctorId: string, excludeAssignmentId?: string): string | null => {
+    if (isDoctorAlreadyAssigned(date, timeSlot, doctorId, excludeAssignmentId)) {
+      return 'Occupato';
+    }
+    return null;
+  };
+
+  const isRestRequiredShift = (roomId: string, timeSlot: TimeSlot): boolean => {
+    const room = rooms.find(r => r.id === roomId);
+    if (!room) return false;
+    const slot = room.slots.find(s => s.timeSlot === timeSlot);
+    return slot?.requiresNextDayRest || false;
+  };
+
+  const isFullDayExclusiveShift = (roomId: string, timeSlot: TimeSlot): boolean => {
+    const room = rooms.find(r => r.id === roomId);
+    if (!room) return false;
+    const slot = room.slots.find(s => s.timeSlot === timeSlot);
+    return slot?.isFullDayExclusive || false;
+  };
+
+  const getAssignmentInvalidReason = (assignment: Assignment): string | null => {
+    if (isDoctorOnRestDay(assignment.date, assignment.doctorId)) {
+      return 'Smontante';
+    }
+
+    const isThisExclusive = isFullDayExclusiveShift(assignment.roomId, assignment.timeSlot);
+    const otherSameDayAssignments = schedule.assignments.filter(
+      a => a.date === assignment.date && a.doctorId === assignment.doctorId && a.id !== assignment.id
+    );
+
+    if (isThisExclusive && otherSameDayAssignments.length > 0) {
+      return 'Montante';
+    }
+
+    if (otherSameDayAssignments.some(a => isFullDayExclusiveShift(a.roomId, a.timeSlot))) {
+      return 'Montante';
+    }
+
+    return null;
+  };
+
+  const invalidAssignments = useMemo(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/3c4029e3-53eb-4a89-b9ae-b785c8e77d39',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MonthlyCalendar.tsx:134',message:'useMemo invalidAssignments executing',data:{totalAssignments:schedule.assignments.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    const result = schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/3c4029e3-53eb-4a89-b9ae-b785c8e77d39',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MonthlyCalendar.tsx:140',message:'useMemo invalidAssignments completed successfully',data:{invalidCount:result.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    return result;
+  }, [schedule.assignments, rooms]);
+
+  const getNextDayStr = (date: string): string => {
+    const currentDate = new Date(date);
+    const nextDate = new Date(currentDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    return `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
+  };
+
+  const getDoctorNextDayAssignmentsCount = (date: string, doctorId: string): number => {
+    const nextDayStr = getNextDayStr(date);
+    return schedule.assignments.filter(a => a.date === nextDayStr && a.doctorId === doctorId).length;
+  };
+
+  const getDoctorSameDayOtherAssignmentsCount = (date: string, doctorId: string, excludeAssignmentId?: string): number => {
+    return schedule.assignments.filter(a => a.date === date && a.doctorId === doctorId && a.id !== excludeAssignmentId).length;
+  };
+
+  const hasDoctorExclusiveShiftOnDay = (date: string, doctorId: string): boolean => {
+    const sameDayAssignments = schedule.assignments.filter(a => a.date === date && a.doctorId === doctorId);
+    return sameDayAssignments.some(a => isFullDayExclusiveShift(a.roomId, a.timeSlot));
+  };
+
   const addAssignment = (date: string, roomId: string, timeSlot: TimeSlot, doctorId: string) => {
     const doctor = doctors.find(d => d.id === doctorId);
     const room = rooms.find(r => r.id === roomId);
     if (!doctor || !room) return;
+
+    if (isDoctorAlreadyAssigned(date, timeSlot, doctorId)) {
+      return;
+    }
 
     const newAssignment: Assignment = {
       id: generateId(),
@@ -81,6 +193,13 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   const changeAssignmentDoctor = (assignmentId: string, newDoctorId: string) => {
     const doctor = doctors.find(d => d.id === newDoctorId);
     if (!doctor) return;
+
+    const currentAssignment = schedule.assignments.find(a => a.id === assignmentId);
+    if (!currentAssignment) return;
+
+    if (isDoctorAlreadyAssigned(currentAssignment.date, currentAssignment.timeSlot, newDoctorId, assignmentId)) {
+      return;
+    }
 
     const newAssignments = schedule.assignments.map(a =>
       a.id === assignmentId
@@ -141,6 +260,12 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
             <span className="stat-label">Critici/Dottore</span>
           </div>
         )}
+        {invalidAssignments.length > 0 && (
+          <div className="stat-card warning-stat">
+            <span className="stat-value">⚠️ {invalidAssignments.length}</span>
+            <span className="stat-label">Turni Invalidi</span>
+          </div>
+        )}
       </div>
 
       <div className="calendar-legend">
@@ -192,6 +317,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                             const isEditing = editingCell?.date === dateStr && 
                               editingCell?.roomId === room.id && 
                               editingCell?.timeSlot === assignment.timeSlot;
+                            const invalidReason = getAssignmentInvalidReason(assignment);
                             
                             return (
                               <div
@@ -202,8 +328,9 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                                   borderColor: getDoctorColor(assignment.doctorId)
                                 }}
                                 onClick={() => setEditingCell({ date: dateStr, roomId: room.id, timeSlot: assignment.timeSlot })}
-                                title={`${assignment.doctorName} - ${TIME_SLOT_LABELS[assignment.timeSlot]}`}
+                                title={invalidReason ? `⚠️ ${assignment.doctorName} - ${invalidReason}` : `${assignment.doctorName} - ${TIME_SLOT_LABELS[assignment.timeSlot]}`}
                               >
+                                {invalidReason && <span className="invalid-icon">⚠️</span>}
                                 <span 
                                   className="doctor-color-dot" 
                                   style={{ backgroundColor: getDoctorColor(assignment.doctorId) }}
@@ -216,17 +343,40 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                                       <span>Cambia dottore</span>
                                       <button className="btn-close" onClick={() => setEditingCell(null)}>✕</button>
                                     </div>
-                                    {doctors.map(doctor => (
-                                      <button
-                                        key={doctor.id}
-                                        className={`dropdown-item ${doctor.id === assignment.doctorId ? 'current' : ''}`}
-                                        style={{ borderLeftColor: doctor.color }}
-                                        onClick={() => changeAssignmentDoctor(assignment.id, doctor.id)}
-                                      >
-                                        <span className="doctor-dot" style={{ backgroundColor: doctor.color }}></span>
-                                        {doctor.name}
-                                      </button>
-                                    ))}
+                                    {doctors.map(doctor => {
+                                      const unavailabilityReason = getDoctorUnavailabilityReason(dateStr, assignment.timeSlot, doctor.id, assignment.id);
+                                      const isCurrent = doctor.id === assignment.doctorId;
+                                      const isUnavailable = !!unavailabilityReason;
+                                      const isRestShift = isRestRequiredShift(room.id, assignment.timeSlot);
+                                      const isExclusiveShift = isFullDayExclusiveShift(room.id, assignment.timeSlot);
+                                      const nextDayConflicts = isRestShift ? getDoctorNextDayAssignmentsCount(dateStr, doctor.id) : 0;
+                                      const sameDayConflicts = isExclusiveShift ? getDoctorSameDayOtherAssignmentsCount(dateStr, doctor.id, assignment.id) : 0;
+                                      const isOnRestDay = isDoctorOnRestDay(dateStr, doctor.id);
+                                      const hasExclusiveConflict = hasDoctorExclusiveShiftOnDay(dateStr, doctor.id) && !isCurrent;
+                                      const hasWarning = (nextDayConflicts > 0 || sameDayConflicts > 0 || isOnRestDay || hasExclusiveConflict) && !isCurrent;
+                                      
+                                      let warningText = '';
+                                      if (isOnRestDay) warningText = 'Smontante';
+                                      else if (hasExclusiveConflict) warningText = 'Montante';
+                                      else if (sameDayConflicts > 0) warningText = `${sameDayConflicts} oggi`;
+                                      else if (nextDayConflicts > 0) warningText = `${nextDayConflicts} domani`;
+                                      
+                                      return (
+                                        <button
+                                          key={doctor.id}
+                                          className={`dropdown-item ${isCurrent ? 'current' : ''} ${isUnavailable ? 'unavailable' : ''} ${hasWarning ? 'has-warning' : ''}`}
+                                          style={{ borderLeftColor: doctor.color }}
+                                          onClick={() => !isUnavailable && changeAssignmentDoctor(assignment.id, doctor.id)}
+                                          disabled={isUnavailable}
+                                          title={isUnavailable ? unavailabilityReason! : warningText ? `${warningText} - creerà turno invalido` : ''}
+                                        >
+                                          <span className="doctor-dot" style={{ backgroundColor: doctor.color }}></span>
+                                          {doctor.name}
+                                          {isUnavailable && <span className="unavailable-badge">{unavailabilityReason}</span>}
+                                          {hasWarning && !isUnavailable && <span className="warning-badge">⚠️ {warningText}</span>}
+                                        </button>
+                                      );
+                                    })}
                                     <button
                                       className="dropdown-item delete"
                                       onClick={() => { removeAssignment(assignment.id); setEditingCell(null); }}
@@ -286,17 +436,43 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
               <div className="modal-field">
                 <label>Dottore</label>
                 <div className="doctor-buttons">
-                  {doctors.map(doctor => (
-                    <button
-                      key={doctor.id}
-                      className="doctor-select-btn"
-                      style={{ borderColor: doctor.color, backgroundColor: doctor.color + '20' }}
-                      onClick={() => addAssignment(showAddModal.date, showAddModal.roomId, showAddModal.timeSlot, doctor.id)}
-                    >
-                      <span className="doctor-dot" style={{ backgroundColor: doctor.color }}></span>
-                      {doctor.name}
-                    </button>
-                  ))}
+                  {doctors.map(doctor => {
+                    const unavailabilityReason = getDoctorUnavailabilityReason(showAddModal.date, showAddModal.timeSlot, doctor.id);
+                    const isUnavailable = !!unavailabilityReason;
+                    const isOnRestDay = isDoctorOnRestDay(showAddModal.date, doctor.id);
+                    const isRestShift = isRestRequiredShift(showAddModal.roomId, showAddModal.timeSlot);
+                    const isExclusiveShift = isFullDayExclusiveShift(showAddModal.roomId, showAddModal.timeSlot);
+                    const nextDayConflicts = isRestShift ? getDoctorNextDayAssignmentsCount(showAddModal.date, doctor.id) : 0;
+                    const sameDayConflicts = isExclusiveShift ? getDoctorSameDayOtherAssignmentsCount(showAddModal.date, doctor.id) : 0;
+                    const hasExclusiveConflict = hasDoctorExclusiveShiftOnDay(showAddModal.date, doctor.id);
+                    const hasWarning = isOnRestDay || nextDayConflicts > 0 || sameDayConflicts > 0 || hasExclusiveConflict;
+                    
+                    let warningText = '';
+                    if (isOnRestDay) warningText = 'Smontante';
+                    else if (hasExclusiveConflict) warningText = 'Montante';
+                    else if (sameDayConflicts > 0) warningText = `${sameDayConflicts} oggi`;
+                    else if (nextDayConflicts > 0) warningText = `${nextDayConflicts} domani`;
+                    
+                    return (
+                      <button
+                        key={doctor.id}
+                        className={`doctor-select-btn ${isUnavailable ? 'unavailable' : ''} ${hasWarning ? 'has-warning' : ''}`}
+                        style={{ 
+                          borderColor: doctor.color, 
+                          backgroundColor: isUnavailable ? 'transparent' : doctor.color + '20',
+                          opacity: isUnavailable ? 0.5 : 1
+                        }}
+                        onClick={() => !isUnavailable && addAssignment(showAddModal.date, showAddModal.roomId, showAddModal.timeSlot, doctor.id)}
+                        disabled={isUnavailable}
+                        title={isUnavailable ? unavailabilityReason! : warningText ? `${warningText} - creerà turno invalido` : ''}
+                      >
+                        <span className="doctor-dot" style={{ backgroundColor: doctor.color }}></span>
+                        {doctor.name}
+                        {isUnavailable && <span className="unavailable-text">{unavailabilityReason}</span>}
+                        {hasWarning && !isUnavailable && <span className="warning-text">⚠️ {warningText}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>

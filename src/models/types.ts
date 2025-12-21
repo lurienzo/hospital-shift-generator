@@ -42,6 +42,8 @@ export interface ScheduleSlot {
   timeSlot: TimeSlot;
   requiredDoctors: number;
   isCritical: boolean;
+  requiresNextDayRest: boolean;
+  isFullDayExclusive: boolean;
 }
 
 export interface OperativeRoom {

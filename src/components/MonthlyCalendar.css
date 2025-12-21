@@ -325,6 +325,30 @@
   background: rgba(231, 76, 60, 0.15);
 }
 
+.dropdown-item.unavailable {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dropdown-item.unavailable:hover {
+  background: transparent;
+}
+
+.unavailable-badge {
+  margin-left: auto;
+  font-size: 0.625rem;
+  padding: 0.125rem 0.375rem;
+  background: rgba(231, 76, 60, 0.2);
+  color: #e74c3c;
+  border-radius: 3px;
+}
+
+.unavailable-text {
+  font-size: 0.625rem;
+  color: #e74c3c;
+  margin-left: 0.25rem;
+}
+
 .doctor-dot {
   width: 10px;
   height: 10px;
@@ -564,4 +588,46 @@
 
 .stats-table tbody tr:hover {
   background: var(--surface-elevated);
+}
+
+/* Warning stat card */
+.stat-card.warning-stat {
+  border-color: rgba(241, 196, 15, 0.6);
+  background: rgba(241, 196, 15, 0.12);
+}
+
+.stat-card.warning-stat .stat-value {
+  color: #f1c40f;
+}
+
+/* Invalid assignment icon */
+.invalid-icon {
+  font-size: 0.75rem;
+  margin-right: 2px;
+}
+
+/* Warning badges in dropdowns and modals */
+.warning-badge {
+  margin-left: auto;
+  padding: 0.125rem 0.375rem;
+  background: rgba(241, 196, 15, 0.2);
+  color: #f1c40f;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
+.warning-text {
+  display: block;
+  font-size: 0.6875rem;
+  color: #f1c40f;
+  margin-top: 0.125rem;
+}
+
+.dropdown-item.has-warning {
+  background: rgba(241, 196, 15, 0.08);
+}
+
+.doctor-select-btn.has-warning {
+  border-style: dashed;
 }

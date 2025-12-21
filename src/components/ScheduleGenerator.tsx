@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, TimeSlot, TIME_SLOTS, TIME_SLOT_SHORT_LABELS } from '../models/types';
 import { ScheduleGeneratorService } from '../services/ScheduleGeneratorService';
+import { StorageService } from '../services/StorageService';
 import './ScheduleGenerator.css';
 
 interface ScheduleGeneratorProps {
@@ -39,6 +40,32 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
     return days;
   }, [year, month, daysInMonth]);
 
+  const saveConfig = useCallback((newHolidays: HolidayConfig[], newExclusions: Record<string, string[]>) => {
+    StorageService.saveGenerationConfig({
+      year,
+      month,
+      holidays: newHolidays,
+      doctorDateExclusions: newExclusions,
+    });
+  }, [year, month]);
+
+  const loadMonthConfig = useCallback((targetYear: number, targetMonth: number) => {
+    const savedConfig = StorageService.loadGenerationConfig(targetYear, targetMonth);
+    if (savedConfig) {
+      setHolidays(savedConfig.holidays);
+      setDoctorDateExclusions(savedConfig.doctorDateExclusions);
+    } else {
+      setHolidays([]);
+      setDoctorDateExclusions({});
+    }
+    setSelectedDoctor(null);
+    setEditingHoliday(null);
+  }, []);
+
+  useEffect(() => {
+    loadMonthConfig(year, month);
+  }, [year, month, loadMonthConfig]);
+
   const canGenerate = rooms.length > 0 && doctors.length > 0 && rooms.some(room => room.slots.length > 0);
 
   const getHolidayConfig = (dateStr: string): HolidayConfig | undefined => {
@@ -47,34 +74,39 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
 
   const toggleHoliday = (dateStr: string) => {
     const existing = getHolidayConfig(dateStr);
+    let newHolidays: HolidayConfig[];
     if (existing) {
-      setHolidays(prev => prev.filter(h => h.date !== dateStr));
+      newHolidays = holidays.filter(h => h.date !== dateStr);
       if (editingHoliday === dateStr) {
         setEditingHoliday(null);
       }
     } else {
-      setHolidays(prev => [...prev, { date: dateStr, disabledSlots: [] }]);
+      newHolidays = [...holidays, { date: dateStr, disabledSlots: [] }];
     }
+    setHolidays(newHolidays);
+    saveConfig(newHolidays, doctorDateExclusions);
   };
 
   const toggleHolidaySlot = (dateStr: string, slot: TimeSlot) => {
-    setHolidays(prev => prev.map(h => {
+    const newHolidays = holidays.map(h => {
       if (h.date !== dateStr) return h;
       const disabledSlots = h.disabledSlots.includes(slot)
         ? h.disabledSlots.filter(s => s !== slot)
         : [...h.disabledSlots, slot];
       return { ...h, disabledSlots };
-    }));
+    });
+    setHolidays(newHolidays);
+    saveConfig(newHolidays, doctorDateExclusions);
   };
 
   const toggleDoctorDateExclusion = (doctorId: string, dateStr: string) => {
-    setDoctorDateExclusions(prev => {
-      const currentExclusions = prev[doctorId] || [];
-      const newExclusions = currentExclusions.includes(dateStr)
-        ? currentExclusions.filter(d => d !== dateStr)
-        : [...currentExclusions, dateStr];
-      return { ...prev, [doctorId]: newExclusions };
-    });
+    const currentExclusions = doctorDateExclusions[doctorId] || [];
+    const newExclusions = currentExclusions.includes(dateStr)
+      ? currentExclusions.filter(d => d !== dateStr)
+      : [...currentExclusions, dateStr];
+    const newDoctorDateExclusions = { ...doctorDateExclusions, [doctorId]: newExclusions };
+    setDoctorDateExclusions(newDoctorDateExclusions);
+    saveConfig(holidays, newDoctorDateExclusions);
   };
 
   const handleGenerate = () => {
@@ -96,11 +128,12 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
     }, 300);
   };
 
-  const resetMonthConfig = () => {
-    setHolidays([]);
-    setDoctorDateExclusions({});
-    setSelectedDoctor(null);
-    setEditingHoliday(null);
+  const handleMonthChange = (newMonth: number) => {
+    setMonth(newMonth);
+  };
+
+  const handleYearChange = (newYear: number) => {
+    setYear(newYear);
   };
 
   return (
@@ -114,7 +147,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
         <div className="date-selector">
           <div className="select-group">
             <label>Mese</label>
-            <select value={month} onChange={event => { setMonth(Number(event.target.value)); resetMonthConfig(); }}>
+            <select value={month} onChange={event => handleMonthChange(Number(event.target.value))}>
               {monthNames.map((name, index) => (
                 <option key={index} value={index + 1}>
                   {name}
@@ -125,7 +158,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
 
           <div className="select-group">
             <label>Anno</label>
-            <select value={year} onChange={event => { setYear(Number(event.target.value)); resetMonthConfig(); }}>
+            <select value={year} onChange={event => handleYearChange(Number(event.target.value))}>
               {[2024, 2025, 2026, 2027].map(yearOption => (
                 <option key={yearOption} value={yearOption}>
                   {yearOption}
