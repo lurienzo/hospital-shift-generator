@@ -46,11 +46,17 @@ export interface ScheduleSlot {
   isFullDayExclusive: boolean;
 }
 
+export interface DayGroup {
+  id: string;
+  days: Weekday[];
+}
+
 export interface OperativeRoom {
   id: string;
   name: string;
   color: string;
   slots: ScheduleSlot[];
+  dayGroups: DayGroup[];
 }
 
 export const DOCTOR_COLORS = [

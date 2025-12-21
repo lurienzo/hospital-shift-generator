@@ -10,6 +10,8 @@ import {
   TIME_SLOT_ORDER,
   GenerationConfig,
   HolidayConfig,
+  DayGroup,
+  WEEKDAYS,
 } from '../models/types';
 import { generateId } from '../utils/idGenerator';
 
@@ -130,8 +132,19 @@ export class ScheduleGeneratorService {
       }
     }
 
-    const criticalRequirements = requirements.filter(req => req.isCritical);
-    const nonCriticalRequirements = requirements.filter(req => !req.isCritical);
+    const processedRequirementIds = new Set<string>();
+    this.assignDayGroupRequirements(
+      requirements, assignments, doctorShiftCounts, doctorWeekendCounts, doctorCriticalCounts,
+      doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays,
+      processedRequirementIds
+    );
+
+    const remainingRequirements = requirements.filter(req => 
+      !processedRequirementIds.has(`${req.date}-${req.roomId}-${req.timeSlot}`)
+    );
+
+    const criticalRequirements = remainingRequirements.filter(req => req.isCritical);
+    const nonCriticalRequirements = remainingRequirements.filter(req => !req.isCritical);
 
     const groupByDate = (reqs: SlotRequirement[]) => {
       const grouped = new Map<string, SlotRequirement[]>();
@@ -187,6 +200,195 @@ export class ScheduleGeneratorService {
       if (dateCompare !== 0) return dateCompare;
       return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
     });
+  }
+
+  private assignDayGroupRequirements(
+    requirements: SlotRequirement[],
+    assignments: Assignment[],
+    doctorShiftCounts: Map<string, number>,
+    doctorWeekendCounts: Map<string, number>,
+    doctorCriticalCounts: Map<string, number>,
+    doctorRoomCounts: Map<string, Map<string, number>>,
+    doctorTimeSlotCounts: Map<string, Map<TimeSlot, number>>,
+    doctorLastRoom: Map<string, Map<string, string>>,
+    doctorRestDays: Map<string, Set<string>>,
+    doctorExclusiveDays: Map<string, Set<string>>,
+    processedRequirementIds: Set<string>
+  ): void {
+    for (const room of this.rooms) {
+      const dayGroups = room.dayGroups || [];
+      if (dayGroups.length === 0) continue;
+
+      for (const dayGroup of dayGroups) {
+        if (dayGroup.days.length === 0) continue;
+
+        const groupInstances = this.findDayGroupInstances(dayGroup, room.id, requirements);
+
+        for (const instance of groupInstances) {
+          const instanceRequirements = instance.requirements;
+          if (instanceRequirements.length === 0) continue;
+
+          const maxDoctorsNeeded = Math.max(...instanceRequirements.map(r => r.count));
+
+          for (let doctorSlot = 0; doctorSlot < maxDoctorsNeeded; doctorSlot++) {
+            const doctor = this.findBestDoctorForDayGroup(
+              instanceRequirements, assignments, doctorShiftCounts, doctorWeekendCounts,
+              doctorCriticalCounts, doctorRoomCounts, doctorRestDays, doctorExclusiveDays
+            );
+
+            if (!doctor) continue;
+
+            for (const req of instanceRequirements) {
+              if (req.count <= doctorSlot) continue;
+
+              const alreadyAssigned = assignments.some(
+                a => a.date === req.date && a.roomId === req.roomId && 
+                     a.timeSlot === req.timeSlot && a.doctorId === doctor.id
+              );
+              if (alreadyAssigned) continue;
+
+              assignments.push({
+                id: generateId(),
+                date: req.date,
+                roomId: req.roomId,
+                roomName: req.roomName,
+                timeSlot: req.timeSlot,
+                doctorId: doctor.id,
+                doctorName: doctor.name,
+              });
+
+              doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
+              if (req.isWeekendOrHoliday) {
+                doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
+              }
+              if (req.isCritical) {
+                doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
+              }
+              doctorRoomCounts.get(doctor.id)!.set(req.roomId, (doctorRoomCounts.get(doctor.id)!.get(req.roomId) || 0) + 1);
+              doctorTimeSlotCounts.get(doctor.id)!.set(req.timeSlot, (doctorTimeSlotCounts.get(doctor.id)!.get(req.timeSlot) || 0) + 1);
+              doctorLastRoom.get(doctor.id)!.set(req.date, req.roomId);
+              if (req.requiresNextDayRest) {
+                const nextDay = new Date(req.date);
+                nextDay.setDate(nextDay.getDate() + 1);
+                const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+                doctorRestDays.get(doctor.id)!.add(nextDayStr);
+              }
+              if (req.isFullDayExclusive) {
+                doctorExclusiveDays.get(doctor.id)!.add(req.date);
+              }
+
+              processedRequirementIds.add(`${req.date}-${req.roomId}-${req.timeSlot}`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private findDayGroupInstances(
+    dayGroup: DayGroup,
+    roomId: string,
+    requirements: SlotRequirement[]
+  ): { startDate: string; requirements: SlotRequirement[] }[] {
+    const roomRequirements = requirements.filter(r => r.roomId === roomId);
+    const sortedGroupDays = [...dayGroup.days].sort((a, b) => 
+      WEEKDAYS.indexOf(a) - WEEKDAYS.indexOf(b)
+    );
+
+    if (sortedGroupDays.length === 0) return [];
+
+    const instances: { startDate: string; requirements: SlotRequirement[] }[] = [];
+    const daysInMonth = new Date(this.config.year, this.config.month, 0).getDate();
+    const processedDates = new Set<string>();
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(this.config.year, this.config.month - 1, day);
+      const weekday = this.getWeekday(date);
+      const dateStr = `${this.config.year}-${String(this.config.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+      if (processedDates.has(dateStr)) continue;
+
+      if (dayGroup.days.includes(weekday)) {
+        const instanceDates: string[] = [];
+        const tempDate = new Date(date);
+
+        while (dayGroup.days.includes(this.getWeekday(tempDate))) {
+          const tempDateStr = `${tempDate.getFullYear()}-${String(tempDate.getMonth() + 1).padStart(2, '0')}-${String(tempDate.getDate()).padStart(2, '0')}`;
+          
+          if (tempDate.getMonth() + 1 !== this.config.month) break;
+          
+          instanceDates.push(tempDateStr);
+          processedDates.add(tempDateStr);
+          tempDate.setDate(tempDate.getDate() + 1);
+        }
+
+        const instanceReqs = roomRequirements.filter(r => instanceDates.includes(r.date));
+        if (instanceReqs.length > 0) {
+          instances.push({
+            startDate: instanceDates[0],
+            requirements: instanceReqs,
+          });
+        }
+      }
+    }
+
+    return instances;
+  }
+
+  private findBestDoctorForDayGroup(
+    groupRequirements: SlotRequirement[],
+    assignments: Assignment[],
+    doctorShiftCounts: Map<string, number>,
+    _doctorWeekendCounts: Map<string, number>,
+    _doctorCriticalCounts: Map<string, number>,
+    doctorRoomCounts: Map<string, Map<string, number>>,
+    doctorRestDays: Map<string, Set<string>>,
+    doctorExclusiveDays: Map<string, Set<string>>
+  ): Doctor | null {
+    const groupDates = [...new Set(groupRequirements.map(r => r.date))];
+    const roomId = groupRequirements[0]?.roomId;
+
+    const eligibleDoctors = this.doctors.filter(doctor => {
+      if (doctor.excludedRooms.includes(roomId)) return false;
+
+      for (const req of groupRequirements) {
+        const date = new Date(req.date);
+        const weekday = this.getWeekday(date);
+        if (doctor.excludedWeekdays.includes(weekday)) return false;
+
+        const doctorExcludedDates = this.config.doctorDateExclusions[doctor.id] || [];
+        if (doctorExcludedDates.includes(req.date)) return false;
+
+        const restDays = doctorRestDays.get(doctor.id)!;
+        if (restDays.has(req.date)) return false;
+
+        const exclusiveDays = doctorExclusiveDays.get(doctor.id)!;
+        if (exclusiveDays.has(req.date)) return false;
+      }
+
+      for (const dateStr of groupDates) {
+        const alreadyAssignedThisRoom = assignments.some(
+          a => a.date === dateStr && a.roomId === roomId && a.doctorId === doctor.id
+        );
+        if (alreadyAssignedThisRoom) return false;
+      }
+
+      return true;
+    });
+
+    if (eligibleDoctors.length === 0) return null;
+
+    const sortedDoctors = [...eligibleDoctors].sort((a, b) => {
+      const aShifts = doctorShiftCounts.get(a.id) || 0;
+      const bShifts = doctorShiftCounts.get(b.id) || 0;
+      if (aShifts !== bShifts) return aShifts - bShifts;
+
+      const aRoomCount = doctorRoomCounts.get(a.id)!.get(roomId) || 0;
+      const bRoomCount = doctorRoomCounts.get(b.id)!.get(roomId) || 0;
+      return aRoomCount - bRoomCount;
+    });
+
+    return sortedDoctors[0] || null;
   }
 
   private assignToRequirement(

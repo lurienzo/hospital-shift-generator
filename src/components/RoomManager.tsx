@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   OperativeRoom,
   ScheduleSlot,
+  DayGroup,
   Weekday,
   TimeSlot,
   WEEKDAYS,
@@ -37,6 +38,7 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
       name: newRoomName.trim(),
       color: ROOM_COLORS[rooms.length % ROOM_COLORS.length],
       slots: [],
+      dayGroups: [],
     };
 
     onRoomsChange([...rooms, newRoom]);
@@ -148,6 +150,49 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
           slots: room.slots.map(slot =>
             slot.id === slotId ? { ...slot, isFullDayExclusive: !slot.isFullDayExclusive } : slot
           ),
+        };
+      })
+    );
+  };
+
+  const addDayGroup = (roomId: string) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        const newGroup: DayGroup = {
+          id: generateId(),
+          days: [],
+        };
+        return { ...room, dayGroups: [...(room.dayGroups || []), newGroup] };
+      })
+    );
+  };
+
+  const removeDayGroup = (roomId: string, groupId: string) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        return { ...room, dayGroups: (room.dayGroups || []).filter(g => g.id !== groupId) };
+      })
+    );
+  };
+
+  const toggleDayInGroup = (roomId: string, groupId: string, weekday: Weekday) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        return {
+          ...room,
+          dayGroups: (room.dayGroups || []).map(group => {
+            if (group.id !== groupId) return group;
+            const hasDayAlready = group.days.includes(weekday);
+            return {
+              ...group,
+              days: hasDayAlready
+                ? group.days.filter(d => d !== weekday)
+                : [...group.days, weekday],
+            };
+          }),
         };
       })
     );
@@ -360,6 +405,44 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                     Esclusivo
                   </span>
                 </div>
+
+                <div className="day-groups-section">
+                  <div className="day-groups-header">
+                    <h4>🔗 Gruppi Giorni Consecutivi</h4>
+                    <button className="btn-add-group" onClick={() => addDayGroup(room.id)}>
+                      + Nuovo Gruppo
+                    </button>
+                  </div>
+                  <p className="day-groups-hint">
+                    I medici assegnati a un giorno del gruppo lavoreranno tutti i giorni del gruppo.
+                  </p>
+                  {(room.dayGroups || []).length === 0 && (
+                    <p className="no-groups">Nessun gruppo definito</p>
+                  )}
+                  {(room.dayGroups || []).map((group, index) => (
+                    <div key={group.id} className="day-group-row">
+                      <span className="group-index">Gruppo {index + 1}:</span>
+                      <div className="group-days">
+                        {WEEKDAYS.map(weekday => (
+                          <button
+                            key={weekday}
+                            className={`day-toggle ${group.days.includes(weekday) ? 'active' : ''}`}
+                            onClick={() => toggleDayInGroup(room.id, group.id, weekday)}
+                          >
+                            {WEEKDAY_LABELS[weekday].slice(0, 3)}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        className="btn-remove-group"
+                        onClick={() => removeDayGroup(room.id, group.id)}
+                        title="Rimuovi gruppo"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -374,6 +457,9 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                 )}
                 {room.slots.some(s => s.isFullDayExclusive) && (
                   <span className="summary-badge">🚫 {room.slots.filter(s => s.isFullDayExclusive).length}</span>
+                )}
+                {(room.dayGroups || []).length > 0 && (
+                  <span className="summary-badge">🔗 {room.dayGroups.length} gruppi</span>
                 )}
               </div>
             )}

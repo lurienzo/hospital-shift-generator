@@ -19,9 +19,6 @@ interface EditingCell {
 }
 
 export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: MonthlyCalendarProps) {
-  // #region agent log
-  fetch('http://127.0.0.1:7245/ingest/3c4029e3-53eb-4a89-b9ae-b785c8e77d39',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MonthlyCalendar.tsx:22',message:'MonthlyCalendar component mounting',data:{assignmentsCount:schedule.assignments.length,roomsCount:rooms.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-  // #endregion
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [showAddModal, setShowAddModal] = useState<EditingCell | null>(null);
 
@@ -131,14 +128,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const invalidAssignments = useMemo(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7245/ingest/3c4029e3-53eb-4a89-b9ae-b785c8e77d39',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MonthlyCalendar.tsx:134',message:'useMemo invalidAssignments executing',data:{totalAssignments:schedule.assignments.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
-    const result = schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
-    // #region agent log
-    fetch('http://127.0.0.1:7245/ingest/3c4029e3-53eb-4a89-b9ae-b785c8e77d39',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MonthlyCalendar.tsx:140',message:'useMemo invalidAssignments completed successfully',data:{invalidCount:result.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
-    return result;
+    return schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
   }, [schedule.assignments, rooms]);
 
   const getNextDayStr = (date: string): string => {
