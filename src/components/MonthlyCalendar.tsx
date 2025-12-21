@@ -21,6 +21,8 @@ interface EditingCell {
 export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: MonthlyCalendarProps) {
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [showAddModal, setShowAddModal] = useState<EditingCell | null>(null);
+  const [draggingAssignment, setDraggingAssignment] = useState<string | null>(null);
+  const [dragOverAssignment, setDragOverAssignment] = useState<string | null>(null);
 
   const doctorDateExclusions = useMemo(() => {
     const config = StorageService.loadGenerationConfig(schedule.year, schedule.month);
@@ -214,6 +216,127 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
     setEditingCell(null);
   };
 
+  const getSwapBlockReason = (assignmentId1: string, assignmentId2: string): string | null => {
+    if (assignmentId1 === assignmentId2) return null;
+
+    const assignment1 = schedule.assignments.find(a => a.id === assignmentId1);
+    const assignment2 = schedule.assignments.find(a => a.id === assignmentId2);
+    if (!assignment1 || !assignment2) return 'Turno non trovato';
+
+    const doctor1InSlot2 = schedule.assignments.some(a => 
+      a.id !== assignmentId1 && 
+      a.id !== assignmentId2 &&
+      a.date === assignment2.date && 
+      a.timeSlot === assignment2.timeSlot && 
+      a.doctorId === assignment1.doctorId
+    );
+
+    const doctor2InSlot1 = schedule.assignments.some(a => 
+      a.id !== assignmentId1 && 
+      a.id !== assignmentId2 &&
+      a.date === assignment1.date && 
+      a.timeSlot === assignment1.timeSlot && 
+      a.doctorId === assignment2.doctorId
+    );
+
+    if (doctor1InSlot2) {
+      const doctor1 = doctors.find(d => d.id === assignment1.doctorId);
+      return `${doctor1?.name || 'Dottore'} già presente in questo slot`;
+    }
+
+    if (doctor2InSlot1) {
+      const doctor2 = doctors.find(d => d.id === assignment2.doctorId);
+      return `${doctor2?.name || 'Dottore'} già presente nello slot di origine`;
+    }
+
+    return null;
+  };
+
+  const getSwapWarnings = (assignmentId1: string, assignmentId2: string): { for1: string | null; for2: string | null } => {
+    const assignment1 = schedule.assignments.find(a => a.id === assignmentId1);
+    const assignment2 = schedule.assignments.find(a => a.id === assignmentId2);
+    if (!assignment1 || !assignment2) return { for1: null, for2: null };
+
+    let warning1: string | null = null;
+    let warning2: string | null = null;
+
+    if (isDoctorOnVacation(assignment2.date, assignment1.doctorId)) {
+      warning1 = 'Ferie';
+    } else if (isDoctorOnRestDay(assignment2.date, assignment1.doctorId)) {
+      warning1 = 'Smontante';
+    }
+
+    if (isDoctorOnVacation(assignment1.date, assignment2.doctorId)) {
+      warning2 = 'Ferie';
+    } else if (isDoctorOnRestDay(assignment1.date, assignment2.doctorId)) {
+      warning2 = 'Smontante';
+    }
+
+    return { for1: warning1, for2: warning2 };
+  };
+
+  const swapAssignmentDoctors = (assignmentId1: string, assignmentId2: string) => {
+    if (getSwapBlockReason(assignmentId1, assignmentId2)) return;
+
+    const assignment1 = schedule.assignments.find(a => a.id === assignmentId1);
+    const assignment2 = schedule.assignments.find(a => a.id === assignmentId2);
+    if (!assignment1 || !assignment2) return;
+
+    const newAssignments = schedule.assignments.map(a => {
+      if (a.id === assignmentId1) {
+        return { ...a, doctorId: assignment2.doctorId, doctorName: assignment2.doctorName };
+      }
+      if (a.id === assignmentId2) {
+        return { ...a, doctorId: assignment1.doctorId, doctorName: assignment1.doctorName };
+      }
+      return a;
+    });
+
+    onScheduleChange({ ...schedule, assignments: newAssignments });
+  };
+
+  const handleDragStart = (assignmentId: string) => {
+    setDraggingAssignment(assignmentId);
+    setEditingCell(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingAssignment(null);
+    setDragOverAssignment(null);
+  };
+
+  const handleDragOver = (event: React.DragEvent, assignmentId: string) => {
+    if (draggingAssignment && draggingAssignment !== assignmentId) {
+      const blockReason = getSwapBlockReason(draggingAssignment, assignmentId);
+      if (!blockReason) {
+        event.preventDefault();
+      }
+      setDragOverAssignment(assignmentId);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverAssignment(null);
+  };
+
+  const handleDrop = (event: React.DragEvent, targetAssignmentId: string) => {
+    event.preventDefault();
+    if (draggingAssignment && draggingAssignment !== targetAssignmentId) {
+      swapAssignmentDoctors(draggingAssignment, targetAssignmentId);
+    }
+    setDraggingAssignment(null);
+    setDragOverAssignment(null);
+  };
+
+  const getDragOverState = (assignmentId: string): { isOver: boolean; isBlocked: boolean; blockReason: string | null; warnings: { for1: string | null; for2: string | null } } => {
+    if (!draggingAssignment || dragOverAssignment !== assignmentId) {
+      return { isOver: false, isBlocked: false, blockReason: null, warnings: { for1: null, for2: null } };
+    }
+    const blockReason = getSwapBlockReason(draggingAssignment, assignmentId);
+    const warnings = getSwapWarnings(draggingAssignment, assignmentId);
+    return { isOver: true, isBlocked: !!blockReason, blockReason, warnings };
+  };
+
   const sortedAssignmentsForCell = (dateStr: string, roomId: string): Assignment[] => {
     return schedule.assignments
       .filter(a => a.date === dateStr && a.roomId === roomId)
@@ -277,7 +400,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
           <span className="legend-color weekend-legend"></span>
           Weekend/Festivo
         </span>
-        <span className="legend-tip">💡 Clicca su un turno per modificarlo, o sul + per aggiungerne uno</span>
+        <span className="legend-tip">💡 Clicca su un turno per modificarlo, trascina per scambiare dottori, o premi + per aggiungere</span>
       </div>
 
       <div className="calendar-table-container">
@@ -322,19 +445,50 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
                               editingCell?.roomId === room.id && 
                               editingCell?.timeSlot === assignment.timeSlot;
                             const invalidReason = getAssignmentInvalidReason(assignment);
+                            const isDragging = draggingAssignment === assignment.id;
+                            const dragState = getDragOverState(assignment.id);
+                            
+                            let dragTitle = invalidReason 
+                              ? `⚠️ ${assignment.doctorName} - ${invalidReason}` 
+                              : `${assignment.doctorName} - ${TIME_SLOT_LABELS[assignment.timeSlot]} (trascina per scambiare)`;
+                            
+                            if (dragState.isOver && dragState.isBlocked) {
+                              dragTitle = `❌ ${dragState.blockReason}`;
+                            } else if (dragState.isOver && (dragState.warnings.for1 || dragState.warnings.for2)) {
+                              const warningParts = [];
+                              if (dragState.warnings.for1) warningParts.push(`⚠️ ${dragState.warnings.for1}`);
+                              if (dragState.warnings.for2) warningParts.push(`⚠️ ${dragState.warnings.for2}`);
+                              dragTitle = `Scambio con warning: ${warningParts.join(', ')}`;
+                            }
                             
                             return (
                               <div
                                 key={assignment.id}
-                                className={`assignment-chip ${isEditing ? 'editing' : ''}`}
+                                className={`assignment-chip ${isEditing ? 'editing' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${dragState.isOver && !dragState.isBlocked && (dragState.warnings.for1 || dragState.warnings.for2) ? 'drag-warning' : ''}`}
                                 style={{ 
                                   backgroundColor: getDoctorColor(assignment.doctorId) + '30',
                                   borderColor: getDoctorColor(assignment.doctorId)
                                 }}
+                                draggable={!isEditing}
+                                onDragStart={() => handleDragStart(assignment.id)}
+                                onDragEnd={handleDragEnd}
+                                onDragOver={(e) => handleDragOver(e, assignment.id)}
+                                onDragLeave={handleDragLeave}
+                                onDrop={(e) => handleDrop(e, assignment.id)}
                                 onClick={() => setEditingCell({ date: dateStr, roomId: room.id, timeSlot: assignment.timeSlot })}
-                                title={invalidReason ? `⚠️ ${assignment.doctorName} - ${invalidReason}` : `${assignment.doctorName} - ${TIME_SLOT_LABELS[assignment.timeSlot]}`}
+                                title={dragTitle}
                               >
                                 {invalidReason && <span className="invalid-icon">⚠️</span>}
+                                {dragState.isOver && dragState.isBlocked && (
+                                  <div className="drag-tooltip drag-tooltip-blocked">
+                                    ❌ {dragState.blockReason}
+                                  </div>
+                                )}
+                                {dragState.isOver && !dragState.isBlocked && (dragState.warnings.for1 || dragState.warnings.for2) && (
+                                  <div className="drag-tooltip drag-tooltip-warning">
+                                    ⚠️ {dragState.warnings.for1 || dragState.warnings.for2}
+                                  </div>
+                                )}
                                 <span 
                                   className="doctor-color-dot" 
                                   style={{ backgroundColor: getDoctorColor(assignment.doctorId) }}

@@ -222,6 +222,88 @@
   z-index: 100;
 }
 
+.assignment-chip.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+  cursor: grabbing;
+}
+
+.assignment-chip.drag-over {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px var(--primary), 0 4px 16px rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.2) !important;
+}
+
+.assignment-chip.drag-blocked {
+  transform: scale(0.95);
+  box-shadow: 0 0 0 2px #e74c3c, 0 4px 16px rgba(231, 76, 60, 0.4);
+  background: rgba(231, 76, 60, 0.2) !important;
+  cursor: not-allowed;
+}
+
+.assignment-chip.drag-warning {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px #f39c12, 0 4px 16px rgba(243, 156, 18, 0.4);
+  background: rgba(243, 156, 18, 0.2) !important;
+}
+
+.drag-tooltip {
+  position: absolute;
+  bottom: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.375rem 0.625rem;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 1000;
+  animation: tooltipFade 0.15s ease;
+  pointer-events: none;
+}
+
+@keyframes tooltipFade {
+  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.drag-tooltip-blocked {
+  background: #e74c3c;
+  color: white;
+  box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+}
+
+.drag-tooltip-warning {
+  background: #f39c12;
+  color: white;
+  box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4);
+}
+
+.assignment-chip[draggable="true"] {
+  cursor: grab;
+}
+
+.assignment-chip[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.assignment-chip[draggable="true"]::before {
+  content: '⋮⋮';
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s;
+  letter-spacing: -2px;
+}
+
+.assignment-chip[draggable="true"]:hover::before {
+  opacity: 0.5;
+}
+
 .doctor-color-dot {
   width: 8px;
   height: 8px;
