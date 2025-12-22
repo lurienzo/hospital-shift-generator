@@ -227,29 +227,88 @@ export class StorageService {
   }
 
   static exportToCSV(schedule: MonthlySchedule, rooms: OperativeRoom[]): string {
-    const headers = ['Data', 'Giorno', ...rooms.map(room => room.name)];
+    const weekdayNames = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
+    
+    // Build column definitions: each column is a room + time slot combination
+    interface ColumnDef {
+      roomId: string;
+      roomName: string;
+      timeSlot: string;
+      label: string;
+    }
+    
+    const columns: ColumnDef[] = [];
+    
+    // First add night shifts (they're special, shown without room suffix usually)
+    for (const room of rooms) {
+      const hasNight = room.slots.some(s => s.timeSlot === '20:00-08:00');
+      if (hasNight) {
+        columns.push({
+          roomId: room.id,
+          roomName: room.name,
+          timeSlot: '20:00-08:00',
+          label: `${room.name} Notte`,
+        });
+      }
+    }
+    
+    // Then add morning and afternoon for each room
+    for (const room of rooms) {
+      const hasMorning = room.slots.some(s => s.timeSlot === '08:00-14:00');
+      const hasAfternoon = room.slots.some(s => s.timeSlot === '14:00-20:00');
+      
+      if (hasMorning) {
+        columns.push({
+          roomId: room.id,
+          roomName: room.name,
+          timeSlot: '08:00-14:00',
+          label: `${room.name} M`,
+        });
+      }
+      if (hasAfternoon) {
+        columns.push({
+          roomId: room.id,
+          roomName: room.name,
+          timeSlot: '14:00-20:00',
+          label: `${room.name} P`,
+        });
+      }
+    }
+    
+    // Build headers
+    const headers = ['Giorno', 'Giorno Sett.', ...columns.map(c => c.label)];
     const rows: string[][] = [];
 
     const daysInMonth = new Date(schedule.year, schedule.month, 0).getDate();
-    const weekdayNames = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(schedule.year, schedule.month - 1, day);
-      const dateStr = `${day}/${schedule.month}/${schedule.year}`;
+      const dateStr = `${schedule.year}-${String(schedule.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const weekdayName = weekdayNames[date.getDay()];
 
-      const roomAssignments = rooms.map(room => {
-        const dayAssignments = schedule.assignments.filter(
-          assignment => assignment.date === `${schedule.year}-${String(schedule.month).padStart(2, '0')}-${String(day).padStart(2, '0')}` &&
-            assignment.roomId === room.id
+      const columnValues = columns.map(col => {
+        const assignment = schedule.assignments.find(
+          a => a.date === dateStr && a.roomId === col.roomId && a.timeSlot === col.timeSlot
         );
-        return dayAssignments.map(assignment => `${assignment.doctorName} (${assignment.timeSlot})`).join(', ');
+        // Return just the doctor name, escape commas for CSV
+        return assignment ? assignment.doctorName.replace(/,/g, ';') : '';
       });
 
-      rows.push([dateStr, weekdayName, ...roomAssignments]);
+      rows.push([String(day), weekdayName, ...columnValues]);
     }
 
-    return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+    // Escape any values with commas or quotes for proper CSV format
+    const escapeCSV = (value: string): string => {
+      if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+        return `"${value.replace(/"/g, '""')}"`;
+      }
+      return value;
+    };
+
+    return [
+      headers.map(escapeCSV).join(','), 
+      ...rows.map(row => row.map(escapeCSV).join(','))
+    ].join('\n');
   }
 
   static downloadCSV(schedule: MonthlySchedule, rooms: OperativeRoom[]): void {
