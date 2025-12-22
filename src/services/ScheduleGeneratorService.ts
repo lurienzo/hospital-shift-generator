@@ -44,15 +44,43 @@ export interface GenerationResult {
   validFound: number;
 }
 
+export interface PriorDoctorStats {
+  doctorId: string;
+  totalShifts: number;
+  totalHours: number;
+  weekendShifts: number;
+  criticalShifts: number;
+  shiftsByRoom: Record<string, number>;
+  shiftsByTimeSlot: Record<TimeSlot, number>;
+}
+
+export interface YearPriorStatsResult {
+  stats: PriorDoctorStats[];
+  monthsCovered: number[];
+}
+
 export class ScheduleGeneratorService {
   private rooms: OperativeRoom[];
   private doctors: Doctor[];
   private config: GenerationConfig;
+  private priorStats: Map<string, PriorDoctorStats>;
 
-  constructor(rooms: OperativeRoom[], doctors: Doctor[], config: GenerationConfig) {
+  constructor(
+    rooms: OperativeRoom[], 
+    doctors: Doctor[], 
+    config: GenerationConfig,
+    priorStats?: PriorDoctorStats[]
+  ) {
     this.rooms = rooms;
     this.doctors = doctors;
     this.config = config;
+    this.priorStats = new Map();
+    
+    if (priorStats) {
+      for (const stat of priorStats) {
+        this.priorStats.set(stat.doctorId, stat);
+      }
+    }
   }
 
   generate(): MonthlySchedule {
@@ -68,7 +96,7 @@ export class ScheduleGeneratorService {
   }
 
   async generateOptimized(
-    attempts: number = 10000,
+    attempts: number = 300,
     onProgress?: (progress: GenerationProgress) => void
   ): Promise<GenerationResult> {
     const requirements = this.buildRequirements();
@@ -197,22 +225,49 @@ export class ScheduleGeneratorService {
   private calculateCost(stats: DoctorStats[]): number {
     if (stats.length === 0) return Infinity;
 
-    const avgShifts = stats.reduce((sum, s) => sum + s.totalShifts, 0) / stats.length;
-    const avgHours = stats.reduce((sum, s) => sum + s.totalHours, 0) / stats.length;
-    const avgDays = stats.reduce((sum, s) => sum + s.distinctDays, 0) / stats.length;
-    const avgWeekend = stats.reduce((sum, s) => sum + s.weekendShifts, 0) / stats.length;
-    const avgCritical = stats.reduce((sum, s) => sum + s.criticalShifts, 0) / stats.length;
+    // If we have prior stats, combine them with current stats for cost calculation
+    const combinedStats = stats.map(s => {
+      const priorStat = this.priorStats.get(s.doctorId);
+      if (!priorStat) return s;
+      
+      // Combine current month stats with prior year stats
+      const combinedShiftsByRoom: Record<string, number> = { ...s.shiftsByRoom };
+      for (const [roomId, count] of Object.entries(priorStat.shiftsByRoom)) {
+        combinedShiftsByRoom[roomId] = (combinedShiftsByRoom[roomId] || 0) + count;
+      }
+      
+      const combinedShiftsByTimeSlot: Record<TimeSlot, number> = { ...s.shiftsByTimeSlot };
+      for (const [timeSlot, count] of Object.entries(priorStat.shiftsByTimeSlot)) {
+        combinedShiftsByTimeSlot[timeSlot as TimeSlot] = (combinedShiftsByTimeSlot[timeSlot as TimeSlot] || 0) + count;
+      }
+      
+      return {
+        ...s,
+        totalShifts: s.totalShifts + priorStat.totalShifts,
+        totalHours: s.totalHours + priorStat.totalHours,
+        weekendShifts: s.weekendShifts + priorStat.weekendShifts,
+        criticalShifts: s.criticalShifts + priorStat.criticalShifts,
+        shiftsByRoom: combinedShiftsByRoom,
+        shiftsByTimeSlot: combinedShiftsByTimeSlot,
+      };
+    });
 
-    const varianceShifts = stats.reduce((sum, s) => sum + Math.pow(s.totalShifts - avgShifts, 2), 0) / stats.length;
-    const varianceHours = stats.reduce((sum, s) => sum + Math.pow(s.totalHours - avgHours, 2), 0) / stats.length;
-    const varianceDays = stats.reduce((sum, s) => sum + Math.pow(s.distinctDays - avgDays, 2), 0) / stats.length;
-    const varianceWeekend = stats.reduce((sum, s) => sum + Math.pow(s.weekendShifts - avgWeekend, 2), 0) / stats.length;
-    const varianceCritical = stats.reduce((sum, s) => sum + Math.pow(s.criticalShifts - avgCritical, 2), 0) / stats.length;
+    const avgShifts = combinedStats.reduce((sum, s) => sum + s.totalShifts, 0) / combinedStats.length;
+    const avgHours = combinedStats.reduce((sum, s) => sum + s.totalHours, 0) / combinedStats.length;
+    const avgDays = combinedStats.reduce((sum, s) => sum + s.distinctDays, 0) / combinedStats.length;
+    const avgWeekend = combinedStats.reduce((sum, s) => sum + s.weekendShifts, 0) / combinedStats.length;
+    const avgCritical = combinedStats.reduce((sum, s) => sum + s.criticalShifts, 0) / combinedStats.length;
+
+    const varianceShifts = combinedStats.reduce((sum, s) => sum + Math.pow(s.totalShifts - avgShifts, 2), 0) / combinedStats.length;
+    const varianceHours = combinedStats.reduce((sum, s) => sum + Math.pow(s.totalHours - avgHours, 2), 0) / combinedStats.length;
+    const varianceDays = combinedStats.reduce((sum, s) => sum + Math.pow(s.distinctDays - avgDays, 2), 0) / combinedStats.length;
+    const varianceWeekend = combinedStats.reduce((sum, s) => sum + Math.pow(s.weekendShifts - avgWeekend, 2), 0) / combinedStats.length;
+    const varianceCritical = combinedStats.reduce((sum, s) => sum + Math.pow(s.criticalShifts - avgCritical, 2), 0) / combinedStats.length;
 
     let variancePerRoom = 0;
     for (const room of this.rooms) {
-      const avgRoom = stats.reduce((sum, s) => sum + (s.shiftsByRoom[room.id] || 0), 0) / stats.length;
-      variancePerRoom += stats.reduce((sum, s) => sum + Math.pow((s.shiftsByRoom[room.id] || 0) - avgRoom, 2), 0) / stats.length;
+      const avgRoom = combinedStats.reduce((sum, s) => sum + (s.shiftsByRoom[room.id] || 0), 0) / combinedStats.length;
+      variancePerRoom += combinedStats.reduce((sum, s) => sum + Math.pow((s.shiftsByRoom[room.id] || 0) - avgRoom, 2), 0) / combinedStats.length;
     }
 
     const cost = 
@@ -300,20 +355,26 @@ export class ScheduleGeneratorService {
     const doctorRestDays: Map<string, Set<string>> = new Map();
     const doctorExclusiveDays: Map<string, Set<string>> = new Map();
 
+    // Initialize with prior stats if available (for year-based balancing)
     for (const doctor of this.doctors) {
-      doctorShiftCounts.set(doctor.id, 0);
-      doctorWeekendCounts.set(doctor.id, 0);
-      doctorCriticalCounts.set(doctor.id, 0);
+      const priorStat = this.priorStats.get(doctor.id);
+      
+      doctorShiftCounts.set(doctor.id, priorStat?.totalShifts || 0);
+      doctorWeekendCounts.set(doctor.id, priorStat?.weekendShifts || 0);
+      doctorCriticalCounts.set(doctor.id, priorStat?.criticalShifts || 0);
       doctorRoomCounts.set(doctor.id, new Map());
       doctorTimeSlotCounts.set(doctor.id, new Map());
       doctorLastRoom.set(doctor.id, new Map());
       doctorRestDays.set(doctor.id, new Set());
       doctorExclusiveDays.set(doctor.id, new Set());
+      
       for (const room of this.rooms) {
-        doctorRoomCounts.get(doctor.id)!.set(room.id, 0);
+        const priorRoomCount = priorStat?.shiftsByRoom[room.id] || 0;
+        doctorRoomCounts.get(doctor.id)!.set(room.id, priorRoomCount);
       }
       for (const timeSlot of TIME_SLOTS) {
-        doctorTimeSlotCounts.get(doctor.id)!.set(timeSlot, 0);
+        const priorTimeSlotCount = priorStat?.shiftsByTimeSlot[timeSlot] || 0;
+        doctorTimeSlotCounts.get(doctor.id)!.set(timeSlot, priorTimeSlotCount);
       }
     }
 
@@ -943,5 +1004,92 @@ export class ScheduleGeneratorService {
         shiftsByTimeSlot,
       };
     });
+  }
+
+  /**
+   * Calculate aggregated stats from prior months of the same year.
+   * Used to balance new month generation based on year-to-date statistics.
+   */
+  static calculatePriorYearStats(
+    year: number,
+    currentMonth: number,
+    doctors: Doctor[],
+    rooms: OperativeRoom[],
+    getActiveScheduleForMonth: (year: number, month: number) => MonthlySchedule | null
+  ): YearPriorStatsResult {
+    const monthsCovered: number[] = [];
+    
+    // Initialize aggregated stats for each doctor
+    const aggregatedStats = new Map<string, PriorDoctorStats>();
+    for (const doctor of doctors) {
+      const shiftsByRoom: Record<string, number> = {};
+      for (const room of rooms) {
+        shiftsByRoom[room.id] = 0;
+      }
+      
+      aggregatedStats.set(doctor.id, {
+        doctorId: doctor.id,
+        totalShifts: 0,
+        totalHours: 0,
+        weekendShifts: 0,
+        criticalShifts: 0,
+        shiftsByRoom,
+        shiftsByTimeSlot: {
+          '08:00-14:00': 0,
+          '14:00-20:00': 0,
+          '20:00-08:00': 0,
+        },
+      });
+    }
+
+    // Build set of critical slots
+    const criticalSlots = new Set<string>();
+    for (const room of rooms) {
+      for (const slot of room.slots) {
+        if (slot.isCritical) {
+          criticalSlots.add(`${room.id}-${slot.timeSlot}`);
+        }
+      }
+    }
+
+    // Aggregate stats from months 1 to currentMonth-1 of the same year
+    for (let month = 1; month < currentMonth; month++) {
+      const schedule = getActiveScheduleForMonth(year, month);
+      if (!schedule) continue;
+
+      monthsCovered.push(month);
+
+      for (const assignment of schedule.assignments) {
+        const stats = aggregatedStats.get(assignment.doctorId);
+        if (!stats) continue;
+
+        stats.totalShifts++;
+        stats.totalHours += TIME_SLOT_HOURS[assignment.timeSlot];
+
+        // Weekend/holiday shifts
+        const date = new Date(assignment.date);
+        if (date.getDay() === 0 || date.getDay() === 6 || schedule.holidays.includes(assignment.date)) {
+          stats.weekendShifts++;
+        }
+
+        // Critical shifts
+        if (criticalSlots.has(`${assignment.roomId}-${assignment.timeSlot}`)) {
+          stats.criticalShifts++;
+        }
+
+        // By room
+        if (stats.shiftsByRoom[assignment.roomId] !== undefined) {
+          stats.shiftsByRoom[assignment.roomId]++;
+        }
+
+        // By time slot
+        stats.shiftsByTimeSlot[assignment.timeSlot]++;
+      }
+    }
+
+    return {
+      stats: Array.from(aggregatedStats.values()),
+      monthsCovered,
+    };
   }
 }

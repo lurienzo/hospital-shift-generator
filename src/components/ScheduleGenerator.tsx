@@ -20,6 +20,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
   const [doctorDateExclusions, setDoctorDateExclusions] = useState<Record<string, string[]>>({});
   const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null);
   const [editingHoliday, setEditingHoliday] = useState<string | null>(null);
+  const [useYearBalance, setUseYearBalance] = useState(true);
 
   const monthNames = [
     'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
@@ -68,6 +69,26 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
   }, [year, month, loadMonthConfig]);
 
   const canGenerate = rooms.length > 0 && doctors.length > 0 && rooms.some(room => room.slots.length > 0);
+
+  // Calculate prior stats for year balancing
+  const priorYearStats = useMemo(() => {
+    if (!useYearBalance || month === 1) return null;
+    
+    const getActiveScheduleForMonth = (targetYear: number, targetMonth: number) => {
+      const version = StorageService.getActiveVersion(targetYear, targetMonth);
+      return version?.schedule || null;
+    };
+
+    const result = ScheduleGeneratorService.calculatePriorYearStats(
+      year,
+      month,
+      doctors,
+      rooms,
+      getActiveScheduleForMonth
+    );
+
+    return result;
+  }, [useYearBalance, year, month, doctors, rooms]);
 
   const getHolidayConfig = (dateStr: string): HolidayConfig | undefined => {
     return holidays.find(h => h.date === dateStr);
@@ -123,10 +144,13 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
       holidays,
       doctorDateExclusions,
     };
-    const generator = new ScheduleGeneratorService(rooms, doctors, config);
+    
+    // Pass prior year stats if year balancing is enabled
+    const priorStats = useYearBalance && priorYearStats ? priorYearStats.stats : undefined;
+    const generator = new ScheduleGeneratorService(rooms, doctors, config, priorStats);
     
     try {
-      const result = await generator.generateOptimized(10000, (progress) => {
+      const result = await generator.generateOptimized(300, (progress) => {
         setGenerationProgress(progress);
       });
       onScheduleGenerated(result.schedule);
@@ -171,7 +195,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
           <div className="select-group">
             <label>Anno</label>
             <select value={year} onChange={event => handleYearChange(Number(event.target.value))}>
-              {[2024, 2025, 2026, 2027].map(yearOption => (
+              {[2025, 2026, 2027, 2028].map(yearOption => (
                 <option key={yearOption} value={yearOption}>
                   {yearOption}
                 </option>
@@ -194,6 +218,37 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
             '⚡ Genera Calendario Ottimizzato'
           )}
         </button>
+      </div>
+
+      <div className="year-balance-section">
+        <label className="year-balance-toggle">
+          <input
+            type="checkbox"
+            checked={useYearBalance}
+            onChange={e => setUseYearBalance(e.target.checked)}
+          />
+          <span className="toggle-label">
+            📊 Bilancia con statistiche anno {year}
+          </span>
+        </label>
+        {useYearBalance && (
+          <div className="year-balance-info">
+            {month === 1 ? (
+              <span className="info-note">
+                ℹ️ Gennaio è il primo mese, non ci sono mesi precedenti da considerare.
+              </span>
+            ) : priorYearStats && priorYearStats.monthsCovered.length > 0 ? (
+              <span className="info-active">
+                ✅ Bilanciamento basato su: {priorYearStats.monthsCovered.map(m => monthNames[m - 1]).join(', ')}
+              </span>
+            ) : (
+              <span className="info-warning">
+                ⚠️ Nessuna versione attiva trovata per i mesi precedenti del {year}.
+                Salva versioni per Gen-{monthNames[month - 2]} per abilitare il bilanciamento.
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {isGenerating && generationProgress && (

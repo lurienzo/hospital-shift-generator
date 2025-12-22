@@ -1,19 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { OperativeRoom, Doctor, MonthlySchedule } from './models/types';
 import { StorageService } from './services/StorageService';
 import { RoomManager } from './components/RoomManager';
 import { DoctorManager } from './components/DoctorManager';
 import { ScheduleGenerator } from './components/ScheduleGenerator';
 import { MonthlyCalendar } from './components/MonthlyCalendar';
+import { GeneralStats } from './components/GeneralStats';
 import './App.css';
 
-type Tab = 'rooms' | 'doctors' | 'generate' | 'calendar';
+type Tab = 'rooms' | 'doctors' | 'generate' | 'calendar' | 'stats';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('rooms');
   const [rooms, setRooms] = useState<OperativeRoom[]>(() => StorageService.loadRooms());
   const [doctors, setDoctors] = useState<Doctor[]>(() => StorageService.loadDoctors());
   const [schedule, setSchedule] = useState<MonthlySchedule | null>(() => StorageService.loadSchedule());
+  const [isDraft, setIsDraft] = useState<boolean>(false);
+  const [draftSchedule, setDraftSchedule] = useState<MonthlySchedule | null>(null);
 
   const handleReset = () => {
     if (window.confirm('Sei sicuro di voler cancellare tutti i dati? Questa azione non può essere annullata.')) {
@@ -21,6 +24,8 @@ function App() {
       setRooms([]);
       setDoctors([]);
       setSchedule(null);
+      setDraftSchedule(null);
+      setIsDraft(false);
       setActiveTab('rooms');
     }
   };
@@ -33,22 +38,59 @@ function App() {
     StorageService.saveDoctors(doctors);
   }, [doctors]);
 
+  // Only update saved versions when viewing a saved version (not draft)
   useEffect(() => {
-    if (schedule) {
+    if (schedule && !isDraft) {
       StorageService.saveSchedule(schedule);
+      const activeVersion = StorageService.getActiveVersion(schedule.year, schedule.month);
+      if (activeVersion) {
+        StorageService.updateScheduleVersion(schedule.year, schedule.month, activeVersion.id, schedule);
+      }
     }
-  }, [schedule]);
+  }, [schedule, isDraft]);
 
-  const handleScheduleGenerated = (newSchedule: MonthlySchedule) => {
+  const handleScheduleGenerated = useCallback((newSchedule: MonthlySchedule) => {
+    setDraftSchedule(newSchedule);
     setSchedule(newSchedule);
+    setIsDraft(true);
     setActiveTab('calendar');
-  };
+  }, []);
+
+  const handleSwitchToVersion = useCallback((versionSchedule: MonthlySchedule) => {
+    setSchedule(versionSchedule);
+    setIsDraft(false);
+  }, []);
+
+  const handleSwitchToDraft = useCallback(() => {
+    if (draftSchedule) {
+      setSchedule(draftSchedule);
+      setIsDraft(true);
+    }
+  }, [draftSchedule]);
+
+  const handleDraftSaved = useCallback(() => {
+    // After saving draft as a version, clear the draft state
+    setDraftSchedule(null);
+    setIsDraft(false);
+  }, []);
+
+  const handleScheduleChange = useCallback((newSchedule: MonthlySchedule | null) => {
+    if (newSchedule) {
+      setSchedule(newSchedule);
+      if (isDraft && draftSchedule) {
+        setDraftSchedule(newSchedule);
+      }
+    } else {
+      setSchedule(null);
+    }
+  }, [isDraft, draftSchedule]);
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: 'rooms', label: 'Sale Operative', icon: '🏥' },
     { id: 'doctors', label: 'Dottori', icon: '👨‍⚕️' },
     { id: 'generate', label: 'Genera', icon: '⚡' },
     { id: 'calendar', label: 'Calendario', icon: '📅' },
+    { id: 'stats', label: 'Statistiche', icon: '📊' },
   ];
 
   return (
@@ -99,18 +141,22 @@ function App() {
             onScheduleGenerated={handleScheduleGenerated}
           />
         )}
-        {activeTab === 'calendar' && schedule && (
-          <MonthlyCalendar schedule={schedule} rooms={rooms} doctors={doctors} onScheduleChange={setSchedule} />
+        {activeTab === 'calendar' && (
+          <MonthlyCalendar 
+            schedule={schedule} 
+            rooms={rooms} 
+            doctors={doctors} 
+            onScheduleChange={handleScheduleChange}
+            onNavigateToGenerate={() => setActiveTab('generate')}
+            isDraft={isDraft}
+            draftSchedule={draftSchedule}
+            onSwitchToVersion={handleSwitchToVersion}
+            onSwitchToDraft={handleSwitchToDraft}
+            onDraftSaved={handleDraftSaved}
+          />
         )}
-        {activeTab === 'calendar' && !schedule && (
-          <div className="empty-calendar">
-            <div className="empty-icon">📅</div>
-            <h2>Nessun calendario generato</h2>
-            <p>Vai alla sezione "Genera" per creare un nuovo calendario turni.</p>
-            <button onClick={() => setActiveTab('generate')}>
-              Genera Calendario
-            </button>
-          </div>
+        {activeTab === 'stats' && (
+          <GeneralStats doctors={doctors} rooms={rooms} />
         )}
       </main>
     </div>

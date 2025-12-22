@@ -1,15 +1,22 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { MonthlySchedule, OperativeRoom, Doctor, Assignment, TimeSlot, TIME_SLOTS, TIME_SLOT_LABELS, TIME_SLOT_ORDER } from '../models/types';
 import { ScheduleGeneratorService } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { generateId } from '../utils/idGenerator';
+import { ScheduleVersionManager } from './ScheduleVersionManager';
 import './MonthlyCalendar.css';
 
 interface MonthlyCalendarProps {
-  schedule: MonthlySchedule;
+  schedule: MonthlySchedule | null;
   rooms: OperativeRoom[];
   doctors: Doctor[];
-  onScheduleChange: (schedule: MonthlySchedule) => void;
+  onScheduleChange: (schedule: MonthlySchedule | null) => void;
+  onNavigateToGenerate: () => void;
+  isDraft: boolean;
+  draftSchedule: MonthlySchedule | null;
+  onSwitchToVersion: (schedule: MonthlySchedule) => void;
+  onSwitchToDraft: () => void;
+  onDraftSaved: () => void;
 }
 
 interface EditingCell {
@@ -22,7 +29,7 @@ type CalendarView = 'rooms' | 'doctors';
 type SortColumn = 'name' | 'shifts' | 'days' | 'hours' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | string;
 type SortDirection = 'asc' | 'desc';
 
-export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: MonthlyCalendarProps) {
+export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, onNavigateToGenerate, isDraft, draftSchedule, onSwitchToVersion, onSwitchToDraft, onDraftSaved }: MonthlyCalendarProps) {
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [showAddModal, setShowAddModal] = useState<EditingCell | null>(null);
   const [draggingAssignment, setDraggingAssignment] = useState<string | null>(null);
@@ -30,6 +37,65 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   const [calendarView, setCalendarView] = useState<CalendarView>('rooms');
   const [sortColumn, setSortColumn] = useState<SortColumn>('shifts');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  
+  // Month navigation state
+  const [selectedYear, setSelectedYear] = useState<number>(schedule?.year || new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(schedule?.month || new Date().getMonth() + 1);
+  
+  // Update selection when schedule changes externally
+  useEffect(() => {
+    if (schedule) {
+      setSelectedYear(schedule.year);
+      setSelectedMonth(schedule.month);
+    }
+  }, [schedule?.year, schedule?.month]);
+  
+  // Get all months with saved versions
+  const monthsWithVersions = useMemo(() => {
+    return StorageService.getMonthsWithVersions();
+  }, [schedule]); // Re-check when schedule changes
+  
+  const availableYears = useMemo(() => {
+    const years = new Set<number>();
+    monthsWithVersions.forEach(m => years.add(m.year));
+    years.add(selectedYear);
+    return Array.from(years).sort();
+  }, [monthsWithVersions, selectedYear]);
+  
+  const monthsForSelectedYear = useMemo(() => {
+    return monthsWithVersions
+      .filter(m => m.year === selectedYear)
+      .map(m => m.month)
+      .sort((a, b) => a - b);
+  }, [monthsWithVersions, selectedYear]);
+  
+  const handleMonthChange = useCallback((year: number, month: number) => {
+    setSelectedYear(year);
+    setSelectedMonth(month);
+    
+    const activeVersion = StorageService.getActiveVersion(year, month);
+    if (activeVersion) {
+      onScheduleChange(activeVersion.schedule);
+    } else {
+      onScheduleChange(null);
+    }
+  }, [onScheduleChange]);
+  
+  const handleYearChange = useCallback((year: number) => {
+    setSelectedYear(year);
+    
+    // Try to find a month with versions in the new year
+    const monthsInYear = monthsWithVersions.filter(m => m.year === year);
+    if (monthsInYear.length > 0) {
+      const nearestMonth = monthsInYear.reduce((prev, curr) => 
+        Math.abs(curr.month - selectedMonth) < Math.abs(prev.month - selectedMonth) ? curr : prev
+      );
+      handleMonthChange(year, nearestMonth.month);
+    } else {
+      setSelectedMonth(1);
+      onScheduleChange(null);
+    }
+  }, [monthsWithVersions, selectedMonth, handleMonthChange, onScheduleChange]);
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -46,9 +112,10 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const doctorDateExclusions = useMemo(() => {
+    if (!schedule) return {};
     const config = StorageService.loadGenerationConfig(schedule.year, schedule.month);
     return config?.doctorDateExclusions || {};
-  }, [schedule.year, schedule.month]);
+  }, [schedule?.year, schedule?.month, schedule]);
 
   const isDoctorOnVacation = (date: string, doctorId: string): boolean => {
     const exclusions = doctorDateExclusions[doctorId] || [];
@@ -62,8 +129,8 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
 
   const weekdayNames = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
 
-  const daysInMonth = new Date(schedule.year, schedule.month, 0).getDate();
-  const stats = ScheduleGeneratorService.calculateStats(schedule, doctors, rooms);
+  const daysInMonth = schedule ? new Date(schedule.year, schedule.month, 0).getDate() : 0;
+  const stats = schedule ? ScheduleGeneratorService.calculateStats(schedule, doctors, rooms) : [];
 
   const getDoctorColor = (doctorId: string): string => {
     const doctor = doctors.find(d => d.id === doctorId);
@@ -74,20 +141,23 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
     const date = new Date(dateStr);
     const dayOfWeek = date.getDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const isHoliday = schedule.holidays.includes(dateStr);
+    const isHoliday = schedule?.holidays.includes(dateStr) || false;
     return { isWeekend, isHoliday };
   };
 
   const handleDownloadCSV = () => {
+    if (!schedule) return;
     StorageService.downloadCSV(schedule, rooms);
   };
 
   const removeAssignment = (assignmentId: string) => {
+    if (!schedule) return;
     const newAssignments = schedule.assignments.filter(a => a.id !== assignmentId);
     onScheduleChange({ ...schedule, assignments: newAssignments });
   };
 
   const isDoctorAlreadyAssigned = (date: string, timeSlot: TimeSlot, doctorId: string, excludeAssignmentId?: string): boolean => {
+    if (!schedule) return false;
     return schedule.assignments.some(
       a => a.date === date && 
            a.timeSlot === timeSlot && 
@@ -97,6 +167,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const isDoctorOnRestDay = (date: string, doctorId: string): boolean => {
+    if (!schedule) return false;
     const currentDate = new Date(date);
     const previousDate = new Date(currentDate);
     previousDate.setDate(previousDate.getDate() - 1);
@@ -149,7 +220,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
     }
 
     const isThisExclusive = isFullDayExclusiveShift(assignment.roomId, assignment.timeSlot);
-    const otherSameDayAssignments = schedule.assignments.filter(
+    const otherSameDayAssignments = (schedule?.assignments || []).filter(
       a => a.date === assignment.date && a.doctorId === assignment.doctorId && a.id !== assignment.id
     );
 
@@ -165,8 +236,9 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const invalidAssignments = useMemo(() => {
+    if (!schedule) return [];
     return schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
-  }, [schedule.assignments, rooms, doctorDateExclusions]);
+  }, [schedule?.assignments, rooms, doctorDateExclusions]);
 
   const getNextDayStr = (date: string): string => {
     const currentDate = new Date(date);
@@ -176,20 +248,24 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const getDoctorNextDayAssignmentsCount = (date: string, doctorId: string): number => {
+    if (!schedule) return 0;
     const nextDayStr = getNextDayStr(date);
     return schedule.assignments.filter(a => a.date === nextDayStr && a.doctorId === doctorId).length;
   };
 
   const getDoctorSameDayOtherAssignmentsCount = (date: string, doctorId: string, excludeAssignmentId?: string): number => {
+    if (!schedule) return 0;
     return schedule.assignments.filter(a => a.date === date && a.doctorId === doctorId && a.id !== excludeAssignmentId).length;
   };
 
   const hasDoctorExclusiveShiftOnDay = (date: string, doctorId: string): boolean => {
+    if (!schedule) return false;
     const sameDayAssignments = schedule.assignments.filter(a => a.date === date && a.doctorId === doctorId);
     return sameDayAssignments.some(a => isFullDayExclusiveShift(a.roomId, a.timeSlot));
   };
 
   const addAssignment = (date: string, roomId: string, timeSlot: TimeSlot, doctorId: string) => {
+    if (!schedule) return;
     const doctor = doctors.find(d => d.id === doctorId);
     const room = rooms.find(r => r.id === roomId);
     if (!doctor || !room) return;
@@ -218,6 +294,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const changeAssignmentDoctor = (assignmentId: string, newDoctorId: string) => {
+    if (!schedule) return;
     const doctor = doctors.find(d => d.id === newDoctorId);
     if (!doctor) return;
 
@@ -238,6 +315,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const getSwapBlockReason = (assignmentId1: string, assignmentId2: string): string | null => {
+    if (!schedule) return 'Calendario non disponibile';
     if (assignmentId1 === assignmentId2) return null;
 
     const assignment1 = schedule.assignments.find(a => a.id === assignmentId1);
@@ -274,6 +352,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const getSwapWarnings = (assignmentId1: string, assignmentId2: string): { for1: string | null; for2: string | null } => {
+    if (!schedule) return { for1: null, for2: null };
     const assignment1 = schedule.assignments.find(a => a.id === assignmentId1);
     const assignment2 = schedule.assignments.find(a => a.id === assignmentId2);
     if (!assignment1 || !assignment2) return { for1: null, for2: null };
@@ -297,6 +376,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const swapAssignmentDoctors = (assignmentId1: string, assignmentId2: string) => {
+    if (!schedule) return;
     if (getSwapBlockReason(assignmentId1, assignmentId2)) return;
 
     const assignment1 = schedule.assignments.find(a => a.id === assignmentId1);
@@ -359,6 +439,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   };
 
   const sortedAssignmentsForCell = (dateStr: string, roomId: string): Assignment[] => {
+    if (!schedule) return [];
     return schedule.assignments
       .filter(a => a.date === dateStr && a.roomId === roomId)
       .sort((a, b) => TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot]);
@@ -376,10 +457,88 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
   const totalCriticalShifts = stats.reduce((sum, stat) => sum + stat.criticalShifts, 0);
   const avgCriticalShifts = doctors.length > 0 ? totalCriticalShifts / doctors.length : 0;
 
+  const monthNamesShort = [
+    'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu',
+    'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic',
+  ];
+
   return (
     <div className="monthly-calendar">
-      <div className="calendar-header">
-        <h2>{monthNames[schedule.month - 1]} {schedule.year}</h2>
+      {/* Month Navigation */}
+      <div className="month-navigation">
+        <div className="month-nav-header">
+          <span className="month-nav-label">📅 Navigazione Mesi Salvati</span>
+          <div className="year-selector-nav">
+            <button 
+              className="nav-arrow"
+              onClick={() => handleYearChange(selectedYear - 1)}
+              disabled={!availableYears.includes(selectedYear - 1) && monthsWithVersions.filter(m => m.year === selectedYear - 1).length === 0}
+            >
+              ◀
+            </button>
+            <span className="current-year">{selectedYear}</span>
+            <button 
+              className="nav-arrow"
+              onClick={() => handleYearChange(selectedYear + 1)}
+              disabled={!availableYears.includes(selectedYear + 1) && monthsWithVersions.filter(m => m.year === selectedYear + 1).length === 0}
+            >
+              ▶
+            </button>
+          </div>
+        </div>
+        <div className="month-nav-grid">
+          {Array.from({ length: 12 }, (_, i) => i + 1).map(month => {
+            const hasVersions = monthsForSelectedYear.includes(month);
+            const isSelected = selectedMonth === month && schedule?.year === selectedYear;
+            const versionCount = hasVersions ? StorageService.loadScheduleVersionsForMonth(selectedYear, month).length : 0;
+            
+            return (
+              <button
+                key={month}
+                className={`month-nav-btn ${isSelected ? 'selected' : ''} ${hasVersions ? 'has-versions' : ''}`}
+                onClick={() => hasVersions && handleMonthChange(selectedYear, month)}
+                disabled={!hasVersions}
+                title={hasVersions ? `${versionCount} versione${versionCount !== 1 ? 'i' : ''} salvata${versionCount !== 1 ? 'e' : ''}` : 'Nessuna versione salvata'}
+              >
+                <span className="month-nav-name">{monthNamesShort[month - 1]}</span>
+                {hasVersions && <span className="version-count">{versionCount}</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Empty state when no schedule */}
+      {!schedule && (
+        <div className="empty-calendar">
+          <div className="empty-icon">📅</div>
+          <h2>Nessun calendario per {monthNames[selectedMonth - 1]} {selectedYear}</h2>
+          <p>
+            {monthsWithVersions.length > 0 
+              ? 'Seleziona un mese con versioni salvate dalla navigazione sopra, oppure genera un nuovo calendario.'
+              : 'Non ci sono calendari salvati. Vai alla sezione "Genera" per creare un nuovo calendario turni.'
+            }
+          </p>
+          <button onClick={onNavigateToGenerate}>
+            ⚡ Genera Calendario
+          </button>
+        </div>
+      )}
+
+      {/* Calendar content when schedule exists */}
+      {schedule && (
+        <>
+          <ScheduleVersionManager 
+            schedule={schedule} 
+            onVersionChange={onSwitchToVersion}
+            isDraft={isDraft}
+            draftSchedule={draftSchedule}
+            onSwitchToDraft={onSwitchToDraft}
+            onDraftSaved={onDraftSaved}
+          />
+          
+          <div className="calendar-header">
+            <h2>{monthNames[schedule.month - 1]} {schedule.year}</h2>
         <div className="calendar-header-actions">
           <div className="view-toggle">
             <button 
@@ -890,6 +1049,8 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange }: 
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

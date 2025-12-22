@@ -104,6 +104,23 @@ export interface MonthlySchedule {
   assignments: Assignment[];
 }
 
+export interface ScheduleVersion {
+  id: string;
+  name: string;
+  schedule: MonthlySchedule;
+  createdAt: string;
+  isActive: boolean;
+}
+
+export function getMonthKey(year: number, month: number): string {
+  return `${year}-${month}`;
+}
+
+export function parseMonthKey(key: string): { year: number; month: number } {
+  const [year, month] = key.split('-').map(Number);
+  return { year, month };
+}
+
 export const TIME_SLOT_HOURS: Record<TimeSlot, number> = {
   '08:00-14:00': 6,
   '14:00-20:00': 6,
