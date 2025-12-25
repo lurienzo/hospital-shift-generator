@@ -11,12 +11,14 @@ interface MonthlyCalendarProps {
   rooms: OperativeRoom[];
   doctors: Doctor[];
   onScheduleChange: (schedule: MonthlySchedule | null) => void;
-  onNavigateToGenerate: () => void;
-  isDraft: boolean;
-  draftSchedule: MonthlySchedule | null;
-  onSwitchToVersion: (schedule: MonthlySchedule) => void;
-  onSwitchToDraft: () => void;
-  onDraftSaved: () => void;
+  onNavigateToGenerate: (year: number, month: number) => void;
+  hasUnsavedChanges: boolean;
+  isNewDraft: boolean;
+  savedVersionId: string | null;
+  onLoadVersion: (schedule: MonthlySchedule, versionId: string) => void;
+  onSaveVersion: (name: string, createNew: boolean) => void;
+  onDiscardChanges: () => void;
+  onDuplicateVersion: (sourceVersionId: string, newName: string) => void;
 }
 
 interface EditingCell {
@@ -29,7 +31,20 @@ type CalendarView = 'rooms' | 'doctors';
 type SortColumn = 'name' | 'shifts' | 'days' | 'hours' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | string;
 type SortDirection = 'asc' | 'desc';
 
-export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, onNavigateToGenerate, isDraft, draftSchedule, onSwitchToVersion, onSwitchToDraft, onDraftSaved }: MonthlyCalendarProps) {
+export function MonthlyCalendar({ 
+  schedule, 
+  rooms, 
+  doctors, 
+  onScheduleChange, 
+  onNavigateToGenerate, 
+  hasUnsavedChanges,
+  isNewDraft,
+  savedVersionId,
+  onLoadVersion,
+  onSaveVersion,
+  onDiscardChanges,
+  onDuplicateVersion
+}: MonthlyCalendarProps) {
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [showAddModal, setShowAddModal] = useState<EditingCell | null>(null);
   const [draggingAssignment, setDraggingAssignment] = useState<string | null>(null);
@@ -55,47 +70,44 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
     return StorageService.getMonthsWithVersions();
   }, [schedule]); // Re-check when schedule changes
   
-  const availableYears = useMemo(() => {
-    const years = new Set<number>();
-    monthsWithVersions.forEach(m => years.add(m.year));
-    years.add(selectedYear);
-    return Array.from(years).sort();
-  }, [monthsWithVersions, selectedYear]);
-  
-  const monthsForSelectedYear = useMemo(() => {
-    return monthsWithVersions
-      .filter(m => m.year === selectedYear)
-      .map(m => m.month)
-      .sort((a, b) => a - b);
-  }, [monthsWithVersions, selectedYear]);
   
   const handleMonthChange = useCallback((year: number, month: number) => {
+    // Warn about unsaved changes before navigating
+    if (hasUnsavedChanges) {
+      if (!window.confirm('Hai modifiche non salvate. Vuoi davvero cambiare mese?')) {
+        return;
+      }
+    }
+    
     setSelectedYear(year);
     setSelectedMonth(month);
     
     const activeVersion = StorageService.getActiveVersion(year, month);
     if (activeVersion) {
-      onScheduleChange(activeVersion.schedule);
+      onLoadVersion(activeVersion.schedule, activeVersion.id);
     } else {
       onScheduleChange(null);
     }
-  }, [onScheduleChange]);
+  }, [onScheduleChange, onLoadVersion, hasUnsavedChanges]);
   
   const handleYearChange = useCallback((year: number) => {
+    // Warn about unsaved changes before navigating
+    if (hasUnsavedChanges) {
+      if (!window.confirm('Hai modifiche non salvate. Vuoi davvero cambiare anno?')) {
+        return;
+      }
+    }
+    
     setSelectedYear(year);
     
-    // Try to find a month with versions in the new year
-    const monthsInYear = monthsWithVersions.filter(m => m.year === year);
-    if (monthsInYear.length > 0) {
-      const nearestMonth = monthsInYear.reduce((prev, curr) => 
-        Math.abs(curr.month - selectedMonth) < Math.abs(prev.month - selectedMonth) ? curr : prev
-      );
-      handleMonthChange(year, nearestMonth.month);
+    // Try to load the same month in the new year, or show empty state
+    const activeVersion = StorageService.getActiveVersion(year, selectedMonth);
+    if (activeVersion) {
+      onLoadVersion(activeVersion.schedule, activeVersion.id);
     } else {
-      setSelectedMonth(1);
       onScheduleChange(null);
     }
-  }, [monthsWithVersions, selectedMonth, handleMonthChange, onScheduleChange]);
+  }, [selectedMonth, hasUnsavedChanges, onLoadVersion, onScheduleChange]);
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -147,7 +159,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
 
   const handleDownloadCSV = () => {
     if (!schedule) return;
-    StorageService.downloadCSV(schedule, rooms);
+    StorageService.downloadCSV(schedule, rooms, doctors);
   };
 
   const removeAssignment = (assignmentId: string) => {
@@ -472,7 +484,6 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
             <button 
               className="nav-arrow"
               onClick={() => handleYearChange(selectedYear - 1)}
-              disabled={!availableYears.includes(selectedYear - 1) && monthsWithVersions.filter(m => m.year === selectedYear - 1).length === 0}
             >
               ◀
             </button>
@@ -480,7 +491,6 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
             <button 
               className="nav-arrow"
               onClick={() => handleYearChange(selectedYear + 1)}
-              disabled={!availableYears.includes(selectedYear + 1) && monthsWithVersions.filter(m => m.year === selectedYear + 1).length === 0}
             >
               ▶
             </button>
@@ -488,17 +498,16 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
         </div>
         <div className="month-nav-grid">
           {Array.from({ length: 12 }, (_, i) => i + 1).map(month => {
-            const hasVersions = monthsForSelectedYear.includes(month);
-            const isSelected = selectedMonth === month && schedule?.year === selectedYear;
-            const versionCount = hasVersions ? StorageService.loadScheduleVersionsForMonth(selectedYear, month).length : 0;
+            const versionCount = StorageService.loadScheduleVersionsForMonth(selectedYear, month).length;
+            const hasVersions = versionCount > 0;
+            const isSelected = selectedMonth === month;
             
             return (
               <button
                 key={month}
                 className={`month-nav-btn ${isSelected ? 'selected' : ''} ${hasVersions ? 'has-versions' : ''}`}
-                onClick={() => hasVersions && handleMonthChange(selectedYear, month)}
-                disabled={!hasVersions}
-                title={hasVersions ? `${versionCount} versione${versionCount !== 1 ? 'i' : ''} salvata${versionCount !== 1 ? 'e' : ''}` : 'Nessuna versione salvata'}
+                onClick={() => handleMonthChange(selectedYear, month)}
+                title={hasVersions ? `${versionCount} versione${versionCount !== 1 ? 'i' : ''} salvata${versionCount !== 1 ? 'e' : ''}` : 'Clicca per selezionare questo mese'}
               >
                 <span className="month-nav-name">{monthNamesShort[month - 1]}</span>
                 {hasVersions && <span className="version-count">{versionCount}</span>}
@@ -519,7 +528,7 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
               : 'Non ci sono calendari salvati. Vai alla sezione "Genera" per creare un nuovo calendario turni.'
             }
           </p>
-          <button onClick={onNavigateToGenerate}>
+          <button onClick={() => onNavigateToGenerate(selectedYear, selectedMonth)}>
             ⚡ Genera Calendario
           </button>
         </div>
@@ -529,12 +538,14 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
       {schedule && (
         <>
           <ScheduleVersionManager 
-            schedule={schedule} 
-            onVersionChange={onSwitchToVersion}
-            isDraft={isDraft}
-            draftSchedule={draftSchedule}
-            onSwitchToDraft={onSwitchToDraft}
-            onDraftSaved={onDraftSaved}
+            schedule={schedule}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isNewDraft={isNewDraft}
+            savedVersionId={savedVersionId}
+            onLoadVersion={onLoadVersion}
+            onSaveVersion={onSaveVersion}
+            onDiscardChanges={onDiscardChanges}
+            onDuplicateVersion={onDuplicateVersion}
           />
           
           <div className="calendar-header">
@@ -958,9 +969,9 @@ export function MonthlyCalendar({ schedule, rooms, doctors, onScheduleChange, on
                     {room.name}{getSortIndicator(`room-${room.id}`)}
                   </th>
                 ))}
-                <th className="timeslot-header separator-left sortable" onClick={() => handleSort('morning')}>🌅 Matt.{getSortIndicator('morning')}</th>
-                <th className="timeslot-header sortable" onClick={() => handleSort('afternoon')}>🌇 Pom.{getSortIndicator('afternoon')}</th>
-                <th className="timeslot-header sortable" onClick={() => handleSort('night')}>🌙 Notte{getSortIndicator('night')}</th>
+                <th className="timeslot-header separator-left sortable" onClick={() => handleSort('morning')}>Mattina{getSortIndicator('morning')}</th>
+                <th className="timeslot-header sortable" onClick={() => handleSort('afternoon')}>Pomeriggio{getSortIndicator('afternoon')}</th>
+                <th className="timeslot-header sortable" onClick={() => handleSort('night')}>Notte{getSortIndicator('night')}</th>
               </tr>
             </thead>
             <tbody>

@@ -5,11 +5,13 @@ import './ScheduleVersionManager.css';
 
 interface ScheduleVersionManagerProps {
   schedule: MonthlySchedule;
-  onVersionChange: (schedule: MonthlySchedule) => void;
-  isDraft: boolean;
-  draftSchedule: MonthlySchedule | null;
-  onSwitchToDraft: () => void;
-  onDraftSaved: () => void;
+  hasUnsavedChanges: boolean;
+  isNewDraft: boolean;
+  savedVersionId: string | null;
+  onLoadVersion: (schedule: MonthlySchedule, versionId: string) => void;
+  onSaveVersion: (name: string, createNew: boolean) => void;
+  onDiscardChanges: () => void;
+  onDuplicateVersion: (sourceVersionId: string, newName: string) => void;
 }
 
 const monthNames = [
@@ -17,10 +19,23 @@ const monthNames = [
   'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre',
 ];
 
-export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, draftSchedule, onSwitchToDraft, onDraftSaved }: ScheduleVersionManagerProps) {
+type SaveMode = 'save' | 'save-as' | 'duplicate';
+
+export function ScheduleVersionManager({ 
+  schedule, 
+  hasUnsavedChanges,
+  isNewDraft,
+  savedVersionId,
+  onLoadVersion,
+  onSaveVersion,
+  onDiscardChanges,
+  onDuplicateVersion
+}: ScheduleVersionManagerProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [newVersionName, setNewVersionName] = useState('');
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveMode, setSaveMode] = useState<SaveMode>('save');
+  const [duplicateSourceId, setDuplicateSourceId] = useState<string | null>(null);
   const [editingVersionId, setEditingVersionId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [refreshCounter, setRefreshCounter] = useState(0);
@@ -34,29 +49,64 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
   }, [schedule.year, schedule.month, refreshCounter]);
 
   const activeVersion = versions.find(v => v.isActive);
+  const currentVersion = savedVersionId ? versions.find(v => v.id === savedVersionId) : null;
 
-  const hasDraftForThisMonth = draftSchedule && 
-    draftSchedule.year === schedule.year && 
-    draftSchedule.month === schedule.month;
-
-  const handleSaveNewVersion = () => {
+  const handleSave = () => {
     if (!newVersionName.trim()) return;
     
-    const savedVersion = StorageService.saveScheduleVersion(schedule, newVersionName.trim(), true);
+    if (saveMode === 'duplicate' && duplicateSourceId) {
+      onDuplicateVersion(duplicateSourceId, newVersionName.trim());
+    } else {
+      onSaveVersion(newVersionName.trim(), saveMode === 'save-as' || isNewDraft);
+    }
+    
     setNewVersionName('');
     setShowSaveModal(false);
+    setDuplicateSourceId(null);
     refreshVersions();
-    
-    // If saving a draft, notify parent to clear draft state and switch to the saved version
-    if (isDraft) {
-      onDraftSaved();
-      onVersionChange(savedVersion.schedule);
+  };
+
+  const handleQuickSave = () => {
+    if (isNewDraft || !currentVersion) {
+      // Must save as new - open modal
+      openSaveModal('save');
+    } else {
+      // Quick save to current version
+      onSaveVersion(currentVersion.name, false);
+      refreshVersions();
     }
   };
 
-  const handleActivateVersion = (version: ScheduleVersion) => {
+  const openSaveModal = (mode: SaveMode, sourceId?: string) => {
+    setSaveMode(mode);
+    setDuplicateSourceId(sourceId || null);
+    
+    if (mode === 'duplicate' && sourceId) {
+      const sourceVersion = versions.find(v => v.id === sourceId);
+      setNewVersionName(sourceVersion ? `${sourceVersion.name} (copia)` : generateDefaultName());
+    } else if (mode === 'save' && currentVersion && !isNewDraft) {
+      setNewVersionName(currentVersion.name);
+    } else {
+      setNewVersionName(generateDefaultName());
+    }
+    
+    setShowSaveModal(true);
+  };
+
+  const handleLoadVersion = (version: ScheduleVersion) => {
+    if (hasUnsavedChanges) {
+      if (!window.confirm('Hai modifiche non salvate. Vuoi davvero cambiare versione?')) {
+        return;
+      }
+    }
+    
+    // Just load the version for viewing, don't change active status
+    onLoadVersion(version.schedule, version.id);
+    refreshVersions();
+  };
+
+  const handleSetActiveForStats = (version: ScheduleVersion) => {
     StorageService.setActiveVersion(schedule.year, schedule.month, version.id);
-    onVersionChange(version.schedule);
     refreshVersions();
   };
 
@@ -65,12 +115,12 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
     
     StorageService.deleteScheduleVersion(schedule.year, schedule.month, versionId);
     
-    // If we deleted the current schedule, load the new active one or switch to draft
-    const newActive = StorageService.getActiveVersion(schedule.year, schedule.month);
-    if (newActive) {
-      onVersionChange(newActive.schedule);
-    } else if (hasDraftForThisMonth) {
-      onSwitchToDraft();
+    // If we deleted the current version, load another one
+    if (savedVersionId === versionId) {
+      const newActive = StorageService.getActiveVersion(schedule.year, schedule.month);
+      if (newActive) {
+        onLoadVersion(newActive.schedule, newActive.id);
+      }
     }
     refreshVersions();
   };
@@ -105,20 +155,53 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
     return `${monthNames[schedule.month - 1]} ${schedule.year} - ${date.toLocaleDateString('it-IT')}`;
   };
 
+  const getSaveModalTitle = () => {
+    switch (saveMode) {
+      case 'save': return isNewDraft ? '💾 Salva Nuova Versione' : '💾 Salva Versione';
+      case 'save-as': return '📄 Salva Come...';
+      case 'duplicate': return '📋 Duplica Versione';
+    }
+  };
+
+  const getSaveModalDescription = () => {
+    const monthYear = `${monthNames[schedule.month - 1]} ${schedule.year}`;
+    switch (saveMode) {
+      case 'save': return isNewDraft 
+        ? `Salva questa bozza come nuova versione del calendario di ${monthYear}` 
+        : `Aggiorna la versione corrente del calendario di ${monthYear}`;
+      case 'save-as': return `Salva le modifiche come nuova versione del calendario di ${monthYear}`;
+      case 'duplicate': return `Crea una copia della versione selezionata`;
+    }
+  };
+
   return (
     <div className="version-manager">
       <div className="version-manager-header" onClick={() => setIsExpanded(!isExpanded)}>
         <div className="version-info">
-          <span className="version-icon">{isDraft ? '📝' : '📁'}</span>
+          <span className="version-icon">{hasUnsavedChanges ? '📝' : '📁'}</span>
           <span className="version-label">
-            {isDraft ? (
+            {isNewDraft ? (
               <>
-                <strong className="draft-label">Bozza</strong>
+                <strong className="draft-label">Nuova Bozza</strong>
                 <span className="version-meta draft-meta">(non salvata)</span>
+              </>
+            ) : currentVersion ? (
+              <>
+                <strong>{currentVersion.name}</strong>
+                {currentVersion.isActive && (
+                  <span className="header-badge-active" title="Versione attiva per statistiche">⭐</span>
+                )}
+                {hasUnsavedChanges && (
+                  <span className="version-meta draft-meta">• modificato</span>
+                )}
+                <span className="version-meta">
+                  ({versions.length} version{versions.length !== 1 ? 'i' : 'e'})
+                </span>
               </>
             ) : activeVersion ? (
               <>
                 <strong>{activeVersion.name}</strong>
+                <span className="header-badge-active" title="Versione attiva per statistiche">⭐</span>
                 <span className="version-meta">
                   ({versions.length} version{versions.length !== 1 ? 'i' : 'e'})
                 </span>
@@ -128,17 +211,41 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
             )}
           </span>
         </div>
-        <div className="version-actions">
+        <div className="version-actions-header">
+          {hasUnsavedChanges && !isNewDraft && (
+            <button
+              className="btn-discard"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm('Annullare tutte le modifiche non salvate?')) {
+                  onDiscardChanges();
+                }
+              }}
+              title="Annulla modifiche"
+            >
+              ↩️ Annulla
+            </button>
+          )}
           <button
-            className={`btn-save-version ${isDraft ? 'highlight' : ''}`}
+            className={`btn-save-version ${hasUnsavedChanges ? 'highlight' : ''}`}
             onClick={(e) => {
               e.stopPropagation();
-              setNewVersionName(generateDefaultName());
-              setShowSaveModal(true);
+              handleQuickSave();
             }}
-            title={isDraft ? "Salva questa bozza come versione" : "Salva come nuova versione"}
+            disabled={!hasUnsavedChanges && !isNewDraft}
+            title={hasUnsavedChanges ? "Salva le modifiche" : "Nessuna modifica da salvare"}
           >
-            💾 {isDraft ? 'Salva Bozza' : 'Salva Versione'}
+            💾 Salva
+          </button>
+          <button
+            className="btn-save-as"
+            onClick={(e) => {
+              e.stopPropagation();
+              openSaveModal('save-as');
+            }}
+            title="Salva come nuova versione"
+          >
+            📄 Salva come...
           </button>
           <span className={`expand-icon ${isExpanded ? 'expanded' : ''}`}>▼</span>
         </div>
@@ -146,94 +253,84 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
 
       {isExpanded && (
         <div className="versions-list">
-          {/* Draft option */}
-          {hasDraftForThisMonth && (
-            <div
-              className={`version-item draft-item ${isDraft ? 'active' : ''}`}
-              onClick={() => !isDraft && onSwitchToDraft()}
-            >
-              <div className="version-item-info">
-                <span className="version-name">📝 Bozza</span>
-                <span className="version-date draft-hint">Appena generata, non salvata</span>
-              </div>
-              <div className="version-item-actions">
-                {isDraft ? (
-                  <span className="active-badge draft-badge">✓ Attuale</span>
-                ) : (
+          {/* Saved versions */}
+          {versions.map(version => {
+            const isCurrentlyViewing = savedVersionId === version.id;
+            const isActiveForStats = version.isActive;
+            return (
+              <div
+                key={version.id}
+                className={`version-item ${isCurrentlyViewing ? 'viewing' : ''} ${isActiveForStats ? 'active-stats' : ''}`}
+              >
+                <div className="version-item-info">
+                  {editingVersionId === version.id ? (
+                    <input
+                      type="text"
+                      className="version-name-input"
+                      value={editingName}
+                      onChange={e => setEditingName(e.target.value)}
+                      onBlur={handleSaveRename}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleSaveRename();
+                        if (e.key === 'Escape') setEditingVersionId(null);
+                      }}
+                      autoFocus
+                      onClick={e => e.stopPropagation()}
+                    />
+                  ) : (
+                    <>
+                      <span className="version-name">{version.name}</span>
+                      <span className="version-date">{formatDate(version.createdAt)}</span>
+                    </>
+                  )}
+                </div>
+                <div className="version-item-actions">
                   <button
-                    className="btn-activate"
+                    className={`btn-load ${isCurrentlyViewing ? 'is-active' : ''}`}
+                    onClick={() => !isCurrentlyViewing && handleLoadVersion(version)}
+                    disabled={isCurrentlyViewing}
+                    title={isCurrentlyViewing ? "Stai visualizzando questa versione" : "Visualizza questa versione"}
+                  >
+                    👁️ {isCurrentlyViewing ? 'Visualizzato' : 'Visualizza'}
+                  </button>
+                  <button
+                    className={`btn-set-active ${isActiveForStats ? 'is-active' : ''}`}
+                    onClick={() => !isActiveForStats && handleSetActiveForStats(version)}
+                    disabled={isActiveForStats}
+                    title={isActiveForStats ? "Questa è la versione attiva per le statistiche" : "Usa per le statistiche generali"}
+                  >
+                    ⭐ {isActiveForStats ? 'Attivo' : 'Attiva'}
+                  </button>
+                  <button
+                    className="btn-duplicate"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onSwitchToDraft();
+                      openSaveModal('duplicate', version.id);
                     }}
-                    title="Visualizza bozza"
+                    title="Duplica versione"
                   >
-                    Visualizza
+                    📋
                   </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Saved versions */}
-          {versions.map(version => (
-            <div
-              key={version.id}
-              className={`version-item ${!isDraft && version.isActive ? 'active' : ''}`}
-            >
-              <div className="version-item-info">
-                {editingVersionId === version.id ? (
-                  <input
-                    type="text"
-                    className="version-name-input"
-                    value={editingName}
-                    onChange={e => setEditingName(e.target.value)}
-                    onBlur={handleSaveRename}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') handleSaveRename();
-                      if (e.key === 'Escape') setEditingVersionId(null);
-                    }}
-                    autoFocus
-                    onClick={e => e.stopPropagation()}
-                  />
-                ) : (
-                  <>
-                    <span className="version-name">{version.name}</span>
-                    <span className="version-date">{formatDate(version.createdAt)}</span>
-                  </>
-                )}
-              </div>
-              <div className="version-item-actions">
-                {!isDraft && version.isActive ? (
-                  <span className="active-badge">✓ Attiva</span>
-                ) : (
                   <button
-                    className="btn-activate"
-                    onClick={() => handleActivateVersion(version)}
-                    title="Imposta come attiva"
+                    className="btn-rename"
+                    onClick={() => handleStartRename(version)}
+                    title="Rinomina"
                   >
-                    Attiva
+                    ✏️
                   </button>
-                )}
-                <button
-                  className="btn-rename"
-                  onClick={() => handleStartRename(version)}
-                  title="Rinomina"
-                >
-                  ✏️
-                </button>
-                <button
-                  className="btn-delete-version"
-                  onClick={() => handleDeleteVersion(version.id)}
-                  title="Elimina"
-                >
-                  🗑️
-                </button>
+                  <button
+                    className="btn-delete-version"
+                    onClick={() => handleDeleteVersion(version.id)}
+                    title="Elimina"
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
-          {versions.length === 0 && !hasDraftForThisMonth && (
+          {versions.length === 0 && (
             <div className="no-versions-message">
               Nessuna versione salvata per questo mese
             </div>
@@ -244,13 +341,8 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
       {showSaveModal && (
         <div className="modal-overlay" onClick={() => setShowSaveModal(false)}>
           <div className="modal-content save-version-modal" onClick={e => e.stopPropagation()}>
-            <h3>💾 {isDraft ? 'Salva Bozza' : 'Salva Versione'}</h3>
-            <p>
-              {isDraft 
-                ? `Salva questa bozza come versione del calendario di ${monthNames[schedule.month - 1]} ${schedule.year}`
-                : `Dai un nome a questa versione del calendario di ${monthNames[schedule.month - 1]} ${schedule.year}`
-              }
-            </p>
+            <h3>{getSaveModalTitle()}</h3>
+            <p>{getSaveModalDescription()}</p>
             <input
               type="text"
               className="version-name-input-large"
@@ -259,7 +351,7 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
               placeholder="Es. Versione definitiva, Bozza 1, ecc."
               autoFocus
               onKeyDown={e => {
-                if (e.key === 'Enter') handleSaveNewVersion();
+                if (e.key === 'Enter') handleSave();
                 if (e.key === 'Escape') setShowSaveModal(false);
               }}
             />
@@ -269,10 +361,10 @@ export function ScheduleVersionManager({ schedule, onVersionChange, isDraft, dra
               </button>
               <button
                 className="btn-confirm"
-                onClick={handleSaveNewVersion}
+                onClick={handleSave}
                 disabled={!newVersionName.trim()}
               >
-                Salva
+                {saveMode === 'duplicate' ? 'Duplica' : 'Salva'}
               </button>
             </div>
           </div>

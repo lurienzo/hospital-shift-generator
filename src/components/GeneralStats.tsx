@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react';
-import { Doctor, OperativeRoom, ScheduleVersion, TimeSlot, TIME_SLOT_HOURS, TIME_SLOTS, getMonthKey } from '../models/types';
+import { useMemo, useState, useEffect } from 'react';
+import { Doctor, OperativeRoom, TimeSlot, TIME_SLOT_HOURS, getMonthKey } from '../models/types';
 import { StorageService } from '../services/StorageService';
-import { ScheduleGeneratorService } from '../services/ScheduleGeneratorService';
 import './GeneralStats.css';
 
 interface GeneralStatsProps {
@@ -49,17 +48,14 @@ const monthNamesFull = [
 export function GeneralStats({ doctors, rooms }: GeneralStatsProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn>('shifts');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [balanceMetric, setBalanceMetric] = useState<BalanceMetric>('total');
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
   const activeVersions = useMemo(() => {
     return StorageService.getAllActiveVersions();
   }, []);
 
-  const activeVersionsForYear = useMemo(() => {
-    return activeVersions.filter(v => v.schedule.year === selectedYear);
-  }, [activeVersions, selectedYear]);
-
+  // Calculate available years
   const availableYears = useMemo(() => {
     const years = new Set<number>();
     activeVersions.forEach(v => years.add(v.schedule.year));
@@ -68,6 +64,19 @@ export function GeneralStats({ doctors, rooms }: GeneralStatsProps) {
     }
     return Array.from(years).sort();
   }, [activeVersions]);
+
+  // Sync selectedYear with availableYears - if current selection is invalid, pick the best option
+  useEffect(() => {
+    if (!availableYears.includes(selectedYear)) {
+      // Current year not available, select the most recent year that has data
+      const newYear = availableYears[availableYears.length - 1] || new Date().getFullYear();
+      setSelectedYear(newYear);
+    }
+  }, [availableYears, selectedYear]);
+
+  const activeVersionsForYear = useMemo(() => {
+    return activeVersions.filter(v => v.schedule.year === selectedYear);
+  }, [activeVersions, selectedYear]);
 
   const aggregatedStats = useMemo((): AggregatedDoctorStats[] => {
     const doctorStatsMap = new Map<string, AggregatedDoctorStats>();

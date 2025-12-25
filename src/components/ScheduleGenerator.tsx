@@ -8,12 +8,14 @@ interface ScheduleGeneratorProps {
   rooms: OperativeRoom[];
   doctors: Doctor[];
   onScheduleGenerated: (schedule: MonthlySchedule) => void;
+  preselectedYear?: number | null;
+  preselectedMonth?: number | null;
 }
 
-export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: ScheduleGeneratorProps) {
+export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, preselectedYear, preselectedMonth }: ScheduleGeneratorProps) {
   const currentDate = new Date();
-  const [year, setYear] = useState(currentDate.getFullYear());
-  const [month, setMonth] = useState(currentDate.getMonth() + 1);
+  const [year, setYear] = useState(preselectedYear ?? currentDate.getFullYear());
+  const [month, setMonth] = useState(preselectedMonth ?? currentDate.getMonth() + 1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
   const [holidays, setHolidays] = useState<HolidayConfig[]>([]);
@@ -21,6 +23,16 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated }: Sched
   const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null);
   const [editingHoliday, setEditingHoliday] = useState<string | null>(null);
   const [useYearBalance, setUseYearBalance] = useState(true);
+
+  // Update year/month when preselected values change
+  useEffect(() => {
+    if (preselectedYear !== null && preselectedYear !== undefined) {
+      setYear(preselectedYear);
+    }
+    if (preselectedMonth !== null && preselectedMonth !== undefined) {
+      setMonth(preselectedMonth);
+    }
+  }, [preselectedYear, preselectedMonth]);
 
   const monthNames = [
     'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',

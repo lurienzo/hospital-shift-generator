@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { OperativeRoom, Doctor, MonthlySchedule } from './models/types';
 import { StorageService } from './services/StorageService';
 import { RoomManager } from './components/RoomManager';
@@ -15,8 +15,25 @@ function App() {
   const [rooms, setRooms] = useState<OperativeRoom[]>(() => StorageService.loadRooms());
   const [doctors, setDoctors] = useState<Doctor[]>(() => StorageService.loadDoctors());
   const [schedule, setSchedule] = useState<MonthlySchedule | null>(() => StorageService.loadSchedule());
-  const [isDraft, setIsDraft] = useState<boolean>(false);
-  const [draftSchedule, setDraftSchedule] = useState<MonthlySchedule | null>(null);
+  
+  // Track the original saved version (before any edits)
+  const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
+  const [originalSchedule, setOriginalSchedule] = useState<MonthlySchedule | null>(null);
+  
+  // Track if this is a brand new generated schedule (never saved)
+  const [isNewDraft, setIsNewDraft] = useState<boolean>(false);
+
+  // Preselected month/year for generation (passed from calendar)
+  const [preselectedYear, setPreselectedYear] = useState<number | null>(null);
+  const [preselectedMonth, setPreselectedMonth] = useState<number | null>(null);
+
+  // Check if we have unsaved changes
+  const hasUnsavedChanges = useMemo(() => {
+    if (isNewDraft) return true;
+    if (!schedule || !originalSchedule) return false;
+    // Compare assignments to detect changes
+    return JSON.stringify(schedule.assignments) !== JSON.stringify(originalSchedule.assignments);
+  }, [schedule, originalSchedule, isNewDraft]);
 
   const handleReset = () => {
     if (window.confirm('Sei sicuro di voler cancellare tutti i dati? Questa azione non può essere annullata.')) {
@@ -24,8 +41,9 @@ function App() {
       setRooms([]);
       setDoctors([]);
       setSchedule(null);
-      setDraftSchedule(null);
-      setIsDraft(false);
+      setOriginalSchedule(null);
+      setSavedVersionId(null);
+      setIsNewDraft(false);
       setActiveTab('rooms');
     }
   };
@@ -38,52 +56,77 @@ function App() {
     StorageService.saveDoctors(doctors);
   }, [doctors]);
 
-  // Only update saved versions when viewing a saved version (not draft)
-  useEffect(() => {
-    if (schedule && !isDraft) {
-      StorageService.saveSchedule(schedule);
-      const activeVersion = StorageService.getActiveVersion(schedule.year, schedule.month);
-      if (activeVersion) {
-        StorageService.updateScheduleVersion(schedule.year, schedule.month, activeVersion.id, schedule);
-      }
-    }
-  }, [schedule, isDraft]);
+  // NO AUTO-SAVE: We removed the automatic persistence of schedule changes
+  // All saves must now be explicit through the version manager
 
   const handleScheduleGenerated = useCallback((newSchedule: MonthlySchedule) => {
-    setDraftSchedule(newSchedule);
     setSchedule(newSchedule);
-    setIsDraft(true);
+    setOriginalSchedule(null); // No original since it's new
+    setSavedVersionId(null);
+    setIsNewDraft(true);
     setActiveTab('calendar');
   }, []);
 
-  const handleSwitchToVersion = useCallback((versionSchedule: MonthlySchedule) => {
+  const handleLoadVersion = useCallback((versionSchedule: MonthlySchedule, versionId: string) => {
     setSchedule(versionSchedule);
-    setIsDraft(false);
+    setOriginalSchedule(JSON.parse(JSON.stringify(versionSchedule))); // Deep copy
+    setSavedVersionId(versionId);
+    setIsNewDraft(false);
   }, []);
 
-  const handleSwitchToDraft = useCallback(() => {
-    if (draftSchedule) {
-      setSchedule(draftSchedule);
-      setIsDraft(true);
+  const handleDiscardChanges = useCallback(() => {
+    if (originalSchedule) {
+      setSchedule(JSON.parse(JSON.stringify(originalSchedule))); // Restore from deep copy
     }
-  }, [draftSchedule]);
+  }, [originalSchedule]);
 
-  const handleDraftSaved = useCallback(() => {
-    // After saving draft as a version, clear the draft state
-    setDraftSchedule(null);
-    setIsDraft(false);
-  }, []);
+  const handleSaveVersion = useCallback((name: string, createNew: boolean) => {
+    if (!schedule) return;
+    
+    if (createNew || isNewDraft || !savedVersionId) {
+      // Create a new version
+      const newVersion = StorageService.saveScheduleVersion(schedule, name, true);
+      setSavedVersionId(newVersion.id);
+      setOriginalSchedule(JSON.parse(JSON.stringify(schedule)));
+      setIsNewDraft(false);
+    } else {
+      // Update existing version
+      StorageService.updateScheduleVersion(schedule.year, schedule.month, savedVersionId, schedule);
+      StorageService.renameScheduleVersion(schedule.year, schedule.month, savedVersionId, name);
+      setOriginalSchedule(JSON.parse(JSON.stringify(schedule)));
+    }
+    
+    // Also update the main schedule storage
+    StorageService.saveSchedule(schedule);
+  }, [schedule, savedVersionId, isNewDraft]);
+
+  const handleDuplicateVersion = useCallback((sourceVersionId: string, newName: string) => {
+    if (!schedule) return;
+    
+    const versions = StorageService.loadScheduleVersionsForMonth(schedule.year, schedule.month);
+    const sourceVersion = versions.find(v => v.id === sourceVersionId);
+    if (!sourceVersion) return;
+    
+    // Create a new version with the same schedule
+    const duplicatedVersion = StorageService.saveScheduleVersion(
+      sourceVersion.schedule, 
+      newName, 
+      false // Don't set as active
+    );
+    
+    return duplicatedVersion;
+  }, [schedule]);
 
   const handleScheduleChange = useCallback((newSchedule: MonthlySchedule | null) => {
     if (newSchedule) {
       setSchedule(newSchedule);
-      if (isDraft && draftSchedule) {
-        setDraftSchedule(newSchedule);
-      }
     } else {
       setSchedule(null);
+      setOriginalSchedule(null);
+      setSavedVersionId(null);
+      setIsNewDraft(false);
     }
-  }, [isDraft, draftSchedule]);
+  }, []);
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: 'rooms', label: 'Sale Operative', icon: '🏥' },
@@ -139,6 +182,8 @@ function App() {
             rooms={rooms}
             doctors={doctors}
             onScheduleGenerated={handleScheduleGenerated}
+            preselectedYear={preselectedYear}
+            preselectedMonth={preselectedMonth}
           />
         )}
         {activeTab === 'calendar' && (
@@ -147,12 +192,18 @@ function App() {
             rooms={rooms} 
             doctors={doctors} 
             onScheduleChange={handleScheduleChange}
-            onNavigateToGenerate={() => setActiveTab('generate')}
-            isDraft={isDraft}
-            draftSchedule={draftSchedule}
-            onSwitchToVersion={handleSwitchToVersion}
-            onSwitchToDraft={handleSwitchToDraft}
-            onDraftSaved={handleDraftSaved}
+            onNavigateToGenerate={(year, month) => {
+              setPreselectedYear(year);
+              setPreselectedMonth(month);
+              setActiveTab('generate');
+            }}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isNewDraft={isNewDraft}
+            savedVersionId={savedVersionId}
+            onLoadVersion={handleLoadVersion}
+            onSaveVersion={handleSaveVersion}
+            onDiscardChanges={handleDiscardChanges}
+            onDuplicateVersion={handleDuplicateVersion}
           />
         )}
         {activeTab === 'stats' && (
