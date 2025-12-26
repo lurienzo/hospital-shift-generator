@@ -13,10 +13,10 @@
   padding: 0.875rem 1rem;
   cursor: pointer;
   transition: background-color 0.2s;
-}
 
-.version-manager-header:hover {
-  background: var(--surface-elevated);
+  &:hover {
+    background: var(--surface-elevated);
+  }
 }
 
 .version-info {
@@ -32,10 +32,10 @@
 .version-label {
   font-size: 0.875rem;
   color: var(--text);
-}
 
-.version-label strong {
-  font-weight: 600;
+  strong {
+    font-weight: 600;
+  }
 }
 
 .header-badge-active {
@@ -70,17 +70,26 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-}
 
-.btn-save-version:hover:not(:disabled) {
-  background: var(--primary-dark);
-  transform: translateY(-1px);
-}
+  &:hover:not(:disabled) {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+  }
 
-.btn-save-version:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none;
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  &.highlight {
+    background: #f39c12;
+    animation: pulse-draft 2s infinite;
+
+    &:hover {
+      background: #e67e22;
+    }
+  }
 }
 
 .btn-save-as {
@@ -93,11 +102,11 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-}
 
-.btn-save-as:hover {
-  background: var(--surface-elevated);
-  border-color: var(--primary);
+  &:hover {
+    background: var(--surface-elevated);
+    border-color: var(--primary);
+  }
 }
 
 .btn-discard {
@@ -109,22 +118,22 @@
   font-size: 0.8125rem;
   cursor: pointer;
   transition: all 0.2s;
-}
 
-.btn-discard:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: var(--danger);
-  color: var(--danger);
+  &:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: var(--danger);
+    color: var(--danger);
+  }
 }
 
 .expand-icon {
   font-size: 0.75rem;
   color: var(--text-muted);
   transition: transform 0.2s;
-}
 
-.expand-icon.expanded {
-  transform: rotate(180deg);
+  &.expanded {
+    transform: rotate(180deg);
+  }
 }
 
 .versions-list {
@@ -140,27 +149,42 @@
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   transition: background-color 0.2s;
-}
 
-.version-item:last-child {
-  border-bottom: none;
-}
+  &:last-child {
+    border-bottom: none;
+  }
 
-.version-item:hover {
-  background: var(--surface-elevated);
-}
+  &:hover {
+    background: var(--surface-elevated);
+  }
 
-.version-item.viewing {
-  background: rgba(99, 102, 241, 0.08);
-  border-left: 3px solid var(--primary);
-}
+  &.viewing {
+    background: rgba(99, 102, 241, 0.08);
+    border-left: 3px solid var(--primary);
+  }
 
-.version-item.active-stats {
-  background: rgba(251, 191, 36, 0.08);
-}
+  &.active-stats {
+    background: rgba(251, 191, 36, 0.08);
+  }
 
-.version-item.viewing.active-stats {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(251, 191, 36, 0.08));
+  &.viewing.active-stats {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(251, 191, 36, 0.08));
+  }
+
+  &.draft-item {
+    background: rgba(243, 156, 18, 0.05);
+    border-left: 3px solid transparent;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(243, 156, 18, 0.1);
+    }
+
+    &.active {
+      background: rgba(243, 156, 18, 0.12);
+      border-left-color: #f39c12;
+    }
+  }
 }
 
 .version-item-info {
@@ -221,19 +245,19 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-}
 
-.btn-load:hover:not(:disabled) {
-  background: var(--primary);
-  color: white;
-}
+  &:hover:not(:disabled) {
+    background: var(--primary);
+    color: white;
+  }
 
-.btn-load.is-active,
-.btn-load:disabled {
-  background: var(--primary);
-  color: white;
-  opacity: 0.7;
-  cursor: default;
+  &.is-active,
+  &:disabled {
+    background: var(--primary);
+    color: white;
+    opacity: 0.7;
+    cursor: default;
+  }
 }
 
 .version-badges {
@@ -270,35 +294,22 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    background: #fbbf24;
+    color: #78350f;
+  }
+
+  &.is-active,
+  &:disabled {
+    background: #fbbf24;
+    color: #78350f;
+    opacity: 0.7;
+    cursor: default;
+  }
 }
 
-.btn-set-active:hover:not(:disabled) {
-  background: #fbbf24;
-  color: #78350f;
-}
-
-.btn-set-active.is-active,
-.btn-set-active:disabled {
-  background: #fbbf24;
-  color: #78350f;
-  opacity: 0.7;
-  cursor: default;
-}
-
-.btn-duplicate {
-  padding: 0.25rem 0.5rem;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 0.875rem;
-  opacity: 0.6;
-  transition: opacity 0.2s;
-}
-
-.btn-duplicate:hover {
-  opacity: 1;
-}
-
+.btn-duplicate,
 .btn-rename,
 .btn-delete-version {
   padding: 0.25rem 0.5rem;
@@ -308,11 +319,10 @@
   font-size: 0.875rem;
   opacity: 0.6;
   transition: opacity 0.2s;
-}
 
-.btn-rename:hover,
-.btn-delete-version:hover {
-  opacity: 1;
+  &:hover {
+    opacity: 1;
+  }
 }
 
 .btn-delete-version:disabled {
@@ -329,15 +339,6 @@
   color: #f39c12 !important;
 }
 
-.btn-save-version.highlight {
-  background: #f39c12;
-  animation: pulse-draft 2s infinite;
-}
-
-.btn-save-version.highlight:hover {
-  background: #e67e22;
-}
-
 @keyframes pulse-draft {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(243, 156, 18, 0.4);
@@ -345,21 +346,6 @@
   50% {
     box-shadow: 0 0 0 6px rgba(243, 156, 18, 0);
   }
-}
-
-.version-item.draft-item {
-  background: rgba(243, 156, 18, 0.05);
-  border-left: 3px solid transparent;
-  cursor: pointer;
-}
-
-.version-item.draft-item:hover {
-  background: rgba(243, 156, 18, 0.1);
-}
-
-.version-item.draft-item.active {
-  background: rgba(243, 156, 18, 0.12);
-  border-left-color: #f39c12;
 }
 
 .draft-hint {
@@ -382,18 +368,18 @@
 /* Save Version Modal */
 .save-version-modal {
   max-width: 420px;
-}
 
-.save-version-modal h3 {
-  margin: 0 0 0.75rem;
-  font-size: 1.125rem;
-  color: var(--text);
-}
+  h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1.125rem;
+    color: var(--text);
+  }
 
-.save-version-modal p {
-  margin: 0 0 1rem;
-  color: var(--text-muted);
-  font-size: 0.875rem;
+  p {
+    margin: 0 0 1rem;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+  }
 }
 
 .version-name-input-large {
@@ -405,11 +391,11 @@
   background: var(--surface);
   color: var(--text);
   transition: border-color 0.2s;
-}
 
-.version-name-input-large:focus {
-  outline: none;
-  border-color: var(--primary);
+  &:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
 }
 
 .modal-actions {
@@ -428,11 +414,11 @@
   font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.2s;
-}
 
-.btn-cancel:hover {
-  background: var(--surface-elevated);
-  color: var(--text);
+  &:hover {
+    background: var(--surface-elevated);
+    color: var(--text);
+  }
 }
 
 .btn-confirm {
@@ -445,15 +431,15 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-}
 
-.btn-confirm:hover:not(:disabled) {
-  background: var(--primary-dark);
-}
+  &:hover:not(:disabled) {
+    background: var(--primary-dark);
+  }
 
-.btn-confirm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 /* Modal overlay - reusable */

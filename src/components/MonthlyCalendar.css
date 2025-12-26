@@ -43,17 +43,17 @@
   cursor: pointer;
   font-size: 0.75rem;
   transition: all 0.2s;
-}
 
-.nav-arrow:hover:not(:disabled) {
-  background: var(--primary);
-  color: white;
-  border-color: var(--primary);
-}
+  &:hover:not(:disabled) {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+  }
 
-.nav-arrow:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
+  &:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
 }
 
 .current-year {
@@ -98,33 +98,38 @@
   transition: all 0.2s;
   gap: 0.125rem;
   opacity: 1;
-}
 
-.month-nav-btn:disabled {
-  cursor: not-allowed;
-}
+  &:disabled {
+    cursor: not-allowed;
+  }
 
-.month-nav-btn.has-versions {
-  opacity: 1;
-  background: var(--surface);
-  border-color: var(--accent);
-  color: var(--text);
-}
+  &.has-versions {
+    opacity: 1;
+    background: var(--surface);
+    border-color: var(--accent);
+    color: var(--text);
 
-.month-nav-btn.has-versions:hover {
-  background: rgba(46, 204, 113, 0.1);
-  transform: translateY(-1px);
-}
+    &:hover {
+      background: rgba(46, 204, 113, 0.1);
+      transform: translateY(-1px);
+    }
 
-.month-nav-btn.selected {
-  background: var(--primary);
-  color: white;
-  border-color: var(--primary);
-  font-weight: 600;
-}
+    &:not(.selected) .version-count {
+      background: rgba(46, 204, 113, 0.2);
+      color: var(--accent);
+    }
+  }
 
-.month-nav-btn.selected:hover {
-  background: var(--primary);
+  &.selected {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    font-weight: 600;
+
+    &:hover {
+      background: var(--primary);
+    }
+  }
 }
 
 .month-nav-name {
@@ -139,11 +144,6 @@
   font-weight: 600;
 }
 
-.month-nav-btn.has-versions:not(.selected) .version-count {
-  background: rgba(46, 204, 113, 0.2);
-  color: var(--accent);
-}
-
 /* Empty Calendar State */
 .empty-calendar {
   text-align: center;
@@ -151,42 +151,42 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-}
 
-.empty-calendar .empty-icon {
-  font-size: 4rem;
-  margin-bottom: 1rem;
-}
+  .empty-icon {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+  }
 
-.empty-calendar h2 {
-  margin: 0 0 0.5rem;
-  color: var(--text);
-  font-size: 1.25rem;
-}
+  h2 {
+    margin: 0 0 0.5rem;
+    color: var(--text);
+    font-size: 1.25rem;
+  }
 
-.empty-calendar p {
-  color: var(--text-muted);
-  max-width: 400px;
-  margin: 0 auto 1.5rem;
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
+  p {
+    color: var(--text-muted);
+    max-width: 400px;
+    margin: 0 auto 1.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
 
-.empty-calendar button {
-  padding: 0.75rem 1.5rem;
-  background: var(--primary);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
+  button {
+    padding: 0.75rem 1.5rem;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
 
-.empty-calendar button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+  }
 }
 
 .calendar-header {
@@ -194,12 +194,12 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1.5rem;
-}
 
-.calendar-header h2 {
-  margin: 0;
-  font-size: 1.75rem;
-  color: var(--text);
+  h2 {
+    margin: 0;
+    font-size: 1.75rem;
+    color: var(--text);
+  }
 }
 
 .btn-download {
@@ -214,11 +214,11 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
 
-.btn-download:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
+  }
 }
 
 .calendar-header-actions {
@@ -244,15 +244,15 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-}
 
-.view-toggle-btn:hover {
-  background: var(--surface-elevated);
-}
+  &:hover {
+    background: var(--surface-elevated);
+  }
 
-.view-toggle-btn.active {
-  background: var(--primary);
-  color: white;
+  &.active {
+    background: var(--primary);
+    color: white;
+  }
 }
 
 .calendar-stats {
@@ -270,24 +270,24 @@
   border-radius: 12px;
   padding: 1rem;
   text-align: center;
-}
 
-.stat-card.weekend-stat {
-  border-color: rgba(243, 156, 18, 0.4);
-  background: rgba(243, 156, 18, 0.08);
-}
+  &.weekend-stat {
+    border-color: rgba(243, 156, 18, 0.4);
+    background: rgba(243, 156, 18, 0.08);
 
-.stat-card.weekend-stat .stat-value {
-  color: #f39c12;
-}
+    .stat-value {
+      color: #f39c12;
+    }
+  }
 
-.stat-card.critical-stat {
-  border-color: rgba(231, 76, 60, 0.4);
-  background: rgba(231, 76, 60, 0.08);
-}
+  &.critical-stat {
+    border-color: rgba(231, 76, 60, 0.4);
+    background: rgba(231, 76, 60, 0.08);
 
-.stat-card.critical-stat .stat-value {
-  color: #e74c3c;
+    .stat-value {
+      color: #e74c3c;
+    }
+  }
 }
 
 .stat-value {
@@ -435,43 +435,74 @@
   position: relative;
   background-color: var(--surface) !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-}
 
-.assignment-chip:hover {
-  transform: translateX(2px);
-}
+  &:hover {
+    transform: translateX(2px);
+  }
 
-.assignment-chip.editing {
-  z-index: 100;
-}
+  &.editing {
+    z-index: 100;
+  }
 
-.assignment-chip.dragging {
-  opacity: 0.5;
-  transform: scale(0.95);
-  cursor: grabbing;
-}
+  &.dragging {
+    opacity: 0.5;
+    transform: scale(0.95);
+    cursor: grabbing;
+  }
 
-.assignment-chip.drag-over {
-  transform: scale(1.05);
-  box-shadow: 0 0 0 2px var(--primary), 0 4px 16px rgba(99, 102, 241, 0.4);
-  background: rgba(99, 102, 241, 0.2) !important;
-}
+  &.drag-over {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 2px var(--primary), 0 4px 16px rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.2) !important;
+  }
 
-.assignment-chip.drag-blocked {
-  transform: scale(0.95);
-  box-shadow: 0 0 0 2px #e74c3c, 0 4px 16px rgba(231, 76, 60, 0.4);
-  background: rgba(231, 76, 60, 0.2) !important;
-  cursor: not-allowed;
-  z-index: 99999;
-  position: relative;
-}
+  &.drag-blocked {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 2px #e74c3c, 0 4px 16px rgba(231, 76, 60, 0.4);
+    background: rgba(231, 76, 60, 0.2) !important;
+    cursor: not-allowed;
+    z-index: 99999;
+    position: relative;
+  }
 
-.assignment-chip.drag-warning {
-  transform: scale(1.05);
-  box-shadow: 0 0 0 2px #f39c12, 0 4px 16px rgba(243, 156, 18, 0.4);
-  background: rgba(243, 156, 18, 0.2) !important;
-  z-index: 99999;
-  position: relative;
+  &.drag-warning {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 2px #f39c12, 0 4px 16px rgba(243, 156, 18, 0.4);
+    background: rgba(243, 156, 18, 0.2) !important;
+    z-index: 99999;
+    position: relative;
+  }
+
+  .doctor-name {
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+  }
+
+  &[draggable="true"] {
+    cursor: grab;
+
+    &:active {
+      cursor: grabbing;
+    }
+
+    &::before {
+      content: '⋮⋮';
+      position: absolute;
+      left: -2px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.5rem;
+      color: var(--text-muted);
+      opacity: 0;
+      transition: opacity 0.15s;
+      letter-spacing: -2px;
+    }
+
+    &:hover::before {
+      opacity: 0.5;
+    }
+  }
 }
 
 .drag-tooltip {
@@ -507,42 +538,11 @@
   box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4);
 }
 
-.assignment-chip[draggable="true"] {
-  cursor: grab;
-}
-
-.assignment-chip[draggable="true"]:active {
-  cursor: grabbing;
-}
-
-.assignment-chip[draggable="true"]::before {
-  content: '⋮⋮';
-  position: absolute;
-  left: -2px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 0.5rem;
-  color: var(--text-muted);
-  opacity: 0;
-  transition: opacity 0.15s;
-  letter-spacing: -2px;
-}
-
-.assignment-chip[draggable="true"]:hover::before {
-  opacity: 0.5;
-}
-
 .doctor-color-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-}
-
-.assignment-chip .doctor-name {
-  font-weight: 600;
-  color: var(--text);
-  flex: 1;
 }
 
 .assignment-chip .time-slot {
