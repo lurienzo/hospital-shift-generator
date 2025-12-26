@@ -469,6 +469,64 @@ export function MonthlyCalendar({
   const totalCriticalShifts = stats.reduce((sum, stat) => sum + stat.criticalShifts, 0);
   const avgCriticalShifts = doctors.length > 0 ? totalCriticalShifts / doctors.length : 0;
 
+  // Calculate summary statistics for the table footer
+  const tableSummary = useMemo(() => {
+    const numDoctors = stats.length || 1;
+    
+    const calcStdDev = (values: number[], mean: number): number => {
+      if (values.length === 0) return 0;
+      const squareDiffs = values.map(v => Math.pow(v - mean, 2));
+      return Math.sqrt(squareDiffs.reduce((a, b) => a + b, 0) / values.length);
+    };
+
+    const totals = {
+      shifts: stats.reduce((sum, s) => sum + s.totalShifts, 0),
+      days: stats.reduce((sum, s) => sum + s.distinctDays, 0),
+      hours: stats.reduce((sum, s) => sum + s.totalHours, 0),
+      weekend: stats.reduce((sum, s) => sum + s.weekendShifts, 0),
+      critical: stats.reduce((sum, s) => sum + s.criticalShifts, 0),
+      morning: stats.reduce((sum, s) => sum + s.shiftsByTimeSlot['08:00-14:00'], 0),
+      afternoon: stats.reduce((sum, s) => sum + s.shiftsByTimeSlot['14:00-20:00'], 0),
+      night: stats.reduce((sum, s) => sum + s.shiftsByTimeSlot['20:00-08:00'], 0),
+      byRoom: rooms.reduce((acc, r) => {
+        acc[r.id] = stats.reduce((sum, s) => sum + (s.shiftsByRoom[r.id] || 0), 0);
+        return acc;
+      }, {} as Record<string, number>),
+    };
+
+    const averages = {
+      shifts: totals.shifts / numDoctors,
+      days: totals.days / numDoctors,
+      hours: totals.hours / numDoctors,
+      weekend: totals.weekend / numDoctors,
+      critical: totals.critical / numDoctors,
+      morning: totals.morning / numDoctors,
+      afternoon: totals.afternoon / numDoctors,
+      night: totals.night / numDoctors,
+      byRoom: rooms.reduce((acc, r) => {
+        acc[r.id] = totals.byRoom[r.id] / numDoctors;
+        return acc;
+      }, {} as Record<string, number>),
+    };
+
+    const stdDevs = {
+      shifts: calcStdDev(stats.map(s => s.totalShifts), averages.shifts),
+      days: calcStdDev(stats.map(s => s.distinctDays), averages.days),
+      hours: calcStdDev(stats.map(s => s.totalHours), averages.hours),
+      weekend: calcStdDev(stats.map(s => s.weekendShifts), averages.weekend),
+      critical: calcStdDev(stats.map(s => s.criticalShifts), averages.critical),
+      morning: calcStdDev(stats.map(s => s.shiftsByTimeSlot['08:00-14:00']), averages.morning),
+      afternoon: calcStdDev(stats.map(s => s.shiftsByTimeSlot['14:00-20:00']), averages.afternoon),
+      night: calcStdDev(stats.map(s => s.shiftsByTimeSlot['20:00-08:00']), averages.night),
+      byRoom: rooms.reduce((acc, r) => {
+        acc[r.id] = calcStdDev(stats.map(s => s.shiftsByRoom[r.id] || 0), averages.byRoom[r.id]);
+        return acc;
+      }, {} as Record<string, number>),
+    };
+
+    return { totals, averages, stdDevs };
+  }, [stats, rooms]);
+
   const monthNamesShort = [
     'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu',
     'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic',
@@ -1057,6 +1115,50 @@ export function MonthlyCalendar({
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr className="totals-row">
+                <td className="footer-label">TOTALE</td>
+                <td className="total-cell">{tableSummary.totals.shifts}</td>
+                <td>{tableSummary.totals.days}</td>
+                <td>{tableSummary.totals.hours}h</td>
+                <td>{tableSummary.totals.weekend}</td>
+                {totalCriticalShifts > 0 && <td>{tableSummary.totals.critical}</td>}
+                {rooms.map(room => (
+                  <td key={room.id}>{tableSummary.totals.byRoom[room.id]}</td>
+                ))}
+                <td className="separator-left">{tableSummary.totals.morning}</td>
+                <td>{tableSummary.totals.afternoon}</td>
+                <td>{tableSummary.totals.night}</td>
+              </tr>
+              <tr className="average-row">
+                <td className="footer-label">MEDIA</td>
+                <td>{tableSummary.averages.shifts.toFixed(1)}</td>
+                <td>{tableSummary.averages.days.toFixed(1)}</td>
+                <td>{tableSummary.averages.hours.toFixed(1)}h</td>
+                <td>{tableSummary.averages.weekend.toFixed(1)}</td>
+                {totalCriticalShifts > 0 && <td>{tableSummary.averages.critical.toFixed(1)}</td>}
+                {rooms.map(room => (
+                  <td key={room.id}>{tableSummary.averages.byRoom[room.id].toFixed(1)}</td>
+                ))}
+                <td className="separator-left">{tableSummary.averages.morning.toFixed(1)}</td>
+                <td>{tableSummary.averages.afternoon.toFixed(1)}</td>
+                <td>{tableSummary.averages.night.toFixed(1)}</td>
+              </tr>
+              <tr className="stddev-row">
+                <td className="footer-label">DEV.STD</td>
+                <td>{tableSummary.stdDevs.shifts.toFixed(2)}</td>
+                <td>{tableSummary.stdDevs.days.toFixed(2)}</td>
+                <td>{tableSummary.stdDevs.hours.toFixed(2)}</td>
+                <td>{tableSummary.stdDevs.weekend.toFixed(2)}</td>
+                {totalCriticalShifts > 0 && <td>{tableSummary.stdDevs.critical.toFixed(2)}</td>}
+                {rooms.map(room => (
+                  <td key={room.id}>{tableSummary.stdDevs.byRoom[room.id].toFixed(2)}</td>
+                ))}
+                <td className="separator-left">{tableSummary.stdDevs.morning.toFixed(2)}</td>
+                <td>{tableSummary.stdDevs.afternoon.toFixed(2)}</td>
+                <td>{tableSummary.stdDevs.night.toFixed(2)}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
