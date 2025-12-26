@@ -462,12 +462,16 @@
   box-shadow: 0 0 0 2px #e74c3c, 0 4px 16px rgba(231, 76, 60, 0.4);
   background: rgba(231, 76, 60, 0.2) !important;
   cursor: not-allowed;
+  z-index: 99999;
+  position: relative;
 }
 
 .assignment-chip.drag-warning {
   transform: scale(1.05);
   box-shadow: 0 0 0 2px #f39c12, 0 4px 16px rgba(243, 156, 18, 0.4);
   background: rgba(243, 156, 18, 0.2) !important;
+  z-index: 99999;
+  position: relative;
 }
 
 .drag-tooltip {
@@ -480,9 +484,10 @@
   font-size: 0.6875rem;
   font-weight: 600;
   white-space: nowrap;
-  z-index: 1000;
+  z-index: 999999;
   animation: tooltipFade 0.15s ease;
   pointer-events: none;
+  isolation: isolate;
 }
 
 @keyframes tooltipFade {
@@ -826,19 +831,23 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
+  table-layout: fixed;
 }
 
 .stats-table th {
-  padding: 0.75rem;
+  padding: 0.75rem 0.5rem;
   background: var(--surface-elevated);
   font-weight: 600;
   text-align: center;
   border-bottom: 2px solid var(--border);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stats-table th:first-child {
   text-align: left;
+  width: 240px;
 }
 
 .stats-table th.weekend-header {
@@ -852,21 +861,28 @@
 }
 
 .stats-table td {
-  padding: 0.75rem;
+  padding: 0.75rem 0.5rem;
   text-align: center;
   border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stats-table td:first-child {
   text-align: left;
+  width: 240px;
 }
 
 .doctor-name-cell {
   font-weight: 600;
   letter-spacing: 0.02em;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+}
+
+.doctor-name-cell .doctor-dot {
+  display: inline-block;
+  vertical-align: middle;
+  margin-bottom: 0.6rem;
+  margin-top:0.6rem;
 }
 
 .total-cell {
@@ -928,6 +944,29 @@
 
 .stats-table th.sortable:hover {
   background: rgba(99, 102, 241, 0.2);
+}
+
+/* Table footer rows */
+.stats-table tfoot {
+  border-top: 2px solid var(--border);
+  background: var(--surface-elevated);
+}
+
+.stats-table tfoot tr {
+  font-size: 0.8125rem;
+}
+
+.stats-table tfoot td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.stats-table tfoot .footer-label {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
 }
 
 /* Warning stat card */
