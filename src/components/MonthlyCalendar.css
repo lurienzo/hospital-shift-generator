@@ -342,7 +342,8 @@
 }
 
 .calendar-table-container {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 80vh;
   border: 1px solid var(--border);
   border-radius: 12px;
   margin-bottom: 2rem;
