@@ -359,7 +359,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
         </div>
         <div className="summary-item">
           <span className="summary-value">
-            {rooms.reduce((total, room) => total + room.slots.reduce((slotTotal, slot) => slotTotal + slot.requiredDoctors, 0), 0)}
+            {rooms.reduce((total, room) => total + room.slots.length, 0)}
           </span>
           <span className="summary-label">Turni/Settimana</span>
         </div>
@@ -617,50 +617,37 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                             return <div key={`${room.id}-${ts}`} className="pf-grid-cell pf-cell-disabled" />;
                           }
 
-                          const cellAssignments = prefilledAssignments.filter(
+                          const existing = prefilledAssignments.find(
                             a => a.date === dateStr && a.roomId === room.id && a.timeSlot === ts
                           );
-                          const maxDoctors = slot.requiredDoctors;
-                          const isFull = cellAssignments.length >= maxDoctors;
                           const isSelected = pfSlot?.date === dateStr && pfSlot?.roomId === room.id && pfSlot?.timeSlot === ts;
+                          const doc = existing ? doctors.find(d => d.id === existing.doctorId) : null;
 
                           return (
                             <div
                               key={`${room.id}-${ts}`}
-                              className={`pf-grid-cell pf-cell ${isSelected ? 'pf-cell-selected' : ''} ${cellAssignments.length > 0 ? 'pf-cell-filled' : ''}`}
+                              className={`pf-grid-cell pf-cell ${isSelected ? 'pf-cell-selected' : ''} ${existing ? 'pf-cell-filled' : ''}`}
                               onClick={() => {
-                                if (!isFull) {
-                                  setPfSlot(isSelected ? null : { date: dateStr, roomId: room.id, timeSlot: ts as TimeSlot });
-                                } else {
+                                if (existing) {
+                                  const updated = prefilledAssignments.filter(pa => pa.id !== existing.id);
+                                  setPrefilledAssignments(updated);
+                                  saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
                                   setPfSlot(null);
+                                } else {
+                                  setPfSlot(isSelected ? null : { date: dateStr, roomId: room.id, timeSlot: ts as TimeSlot });
                                 }
                               }}
-                              title={isFull ? `${cellAssignments.map(a => a.doctorName).join(', ')} (pieno)` : 'Clicca per assegnare'}
+                              title={existing ? `${doc?.name} — clicca per rimuovere` : 'Clicca per assegnare'}
                             >
-                              {cellAssignments.map(a => {
-                                const doc = doctors.find(d => d.id === a.doctorId);
-                                return (
-                                  <span
-                                    key={a.id}
-                                    className="pf-cell-doctor"
-                                    style={{ color: doc?.color, borderColor: doc?.color }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const updated = prefilledAssignments.filter(pa => pa.id !== a.id);
-                                      setPrefilledAssignments(updated);
-                                      saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
-                                    }}
-                                    title={`${doc?.name} — clicca per rimuovere`}
-                                  >
-                                    {doc?.name || '?'}
-                                  </span>
-                                );
-                              })}
-                              {!isFull && !isSelected && cellAssignments.length === 0 && (
+                              {existing ? (
+                                <span className="pf-cell-doctor" style={{ color: doc?.color, borderColor: doc?.color }}>
+                                  {doc?.name || '?'}
+                                </span>
+                              ) : isSelected ? (
+                                <span className="pf-cell-empty">...</span>
+                              ) : (
                                 <span className="pf-cell-empty">+</span>
                               )}
-                              {isSelected && <span className="pf-cell-empty">...</span>}
-                              {maxDoctors > 1 && <span className="pf-cell-count">{maxDoctors}</span>}
                             </div>
                           );
                         })
@@ -677,11 +664,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                 {parseInt(pfSlot.date.split('-')[2])} {monthNames[month - 1]} — {rooms.find(r => r.id === pfSlot.roomId)?.name} {TIME_SLOT_TIME_LABELS[pfSlot.timeSlot]}
               </span>
               <div className="pf-doctor-buttons">
-                {doctors
-                  .filter(d => !prefilledAssignments.some(
-                    a => a.date === pfSlot.date && a.roomId === pfSlot.roomId && a.timeSlot === pfSlot.timeSlot && a.doctorId === d.id
-                  ))
-                  .map(d => (
+                {doctors.map(d => (
                   <button
                     key={d.id}
                     className="pf-doctor-btn"
@@ -702,14 +685,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                       const updated = [...prefilledAssignments, newAssignment];
                       setPrefilledAssignments(updated);
                       saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
-                      // Check if slot is now full
-                      const slot = room.slots.find(s => s.timeSlot === pfSlot.timeSlot);
-                      const newCount = updated.filter(
-                        a => a.date === pfSlot.date && a.roomId === pfSlot.roomId && a.timeSlot === pfSlot.timeSlot
-                      ).length;
-                      if (slot && newCount >= slot.requiredDoctors) {
-                        setPfSlot(null);
-                      }
+                      setPfSlot(null);
                     }}
                   >
                     {d.name}

@@ -22,7 +22,6 @@ interface SlotRequirement {
   roomId: string;
   roomName: string;
   timeSlot: TimeSlot;
-  count: number;
   isWeekendOrHoliday: boolean;
   isCritical: boolean;
   requiresNextDayRest: boolean;
@@ -269,10 +268,10 @@ export class ScheduleGeneratorService {
     // Check for understaffed slots
     const requirements = this.buildRequirements();
     for (const req of requirements) {
-      const assignedCount = schedule.assignments.filter(
+      const hasAssignment = schedule.assignments.some(
         a => a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
-      ).length;
-      if (assignedCount < req.count) {
+      );
+      if (!hasAssignment) {
         warnings++;
       }
     }
@@ -368,7 +367,6 @@ export class ScheduleGeneratorService {
               roomId: room.id,
               roomName: room.name,
               timeSlot: slot.timeSlot,
-              count: slot.requiredDoctors,
               isWeekendOrHoliday,
               isCritical: slot.isCritical,
               requiresNextDayRest: slot.requiresNextDayRest,
@@ -588,69 +586,57 @@ export class ScheduleGeneratorService {
           const instanceRequirements = instance.requirements;
           if (instanceRequirements.length === 0) continue;
 
-          // Reduce needed counts by pre-filled assignments
-          const remainingCounts = new Map<string, number>();
-          for (const req of instanceRequirements) {
-            const key = `${req.date}-${req.roomId}-${req.timeSlot}`;
-            const prefilled = assignments.filter(
-              a => a.locked && a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
-            ).length;
-            remainingCounts.set(key, Math.max(0, req.count - prefilled));
-          }
-          const maxDoctorsNeeded = Math.max(...Array.from(remainingCounts.values()), 0);
-
-          for (let doctorSlot = 0; doctorSlot < maxDoctorsNeeded; doctorSlot++) {
-            const doctor = this.findBestDoctorForDayGroup(
-              instanceRequirements, assignments, doctorShiftCounts, doctorWeekendCounts,
-              doctorCriticalCounts, doctorRoomCounts, doctorRestDays, doctorExclusiveDays,
-              seededRandom
-            );
-
-            if (!doctor) continue;
-
+          // Filter out requirements already satisfied by pre-filled assignments
+          const unresolvedReqs = instanceRequirements.filter(
+            req => !assignments.some(a => a.locked && a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot)
+          );
+          if (unresolvedReqs.length === 0) {
             for (const req of instanceRequirements) {
-              const key = `${req.date}-${req.roomId}-${req.timeSlot}`;
-              const remaining = remainingCounts.get(key) || 0;
-              if (remaining <= doctorSlot) continue;
-
-              const alreadyAssigned = assignments.some(
-                a => a.date === req.date && a.roomId === req.roomId && 
-                     a.timeSlot === req.timeSlot && a.doctorId === doctor.id
-              );
-              if (alreadyAssigned) continue;
-
-              assignments.push({
-                id: generateId(),
-                date: req.date,
-                roomId: req.roomId,
-                roomName: req.roomName,
-                timeSlot: req.timeSlot,
-                doctorId: doctor.id,
-                doctorName: doctor.name,
-              });
-
-              doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
-              if (req.isWeekendOrHoliday) {
-                doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
-              }
-              if (req.isCritical) {
-                doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
-              }
-              doctorRoomCounts.get(doctor.id)!.set(req.roomId, (doctorRoomCounts.get(doctor.id)!.get(req.roomId) || 0) + 1);
-              doctorTimeSlotCounts.get(doctor.id)!.set(req.timeSlot, (doctorTimeSlotCounts.get(doctor.id)!.get(req.timeSlot) || 0) + 1);
-              doctorLastRoom.get(doctor.id)!.set(req.date, req.roomId);
-              if (req.requiresNextDayRest) {
-                const nextDay = parseDateLocal(req.date);
-                nextDay.setDate(nextDay.getDate() + 1);
-                const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-                doctorRestDays.get(doctor.id)!.add(nextDayStr);
-              }
-              if (req.isFullDayExclusive) {
-                doctorExclusiveDays.get(doctor.id)!.add(req.date);
-              }
-
               processedRequirementIds.add(`${req.date}-${req.roomId}-${req.timeSlot}`);
             }
+            continue;
+          }
+
+          const doctor = this.findBestDoctorForDayGroup(
+            unresolvedReqs, assignments, doctorShiftCounts, doctorWeekendCounts,
+            doctorCriticalCounts, doctorRoomCounts, doctorRestDays, doctorExclusiveDays,
+            seededRandom
+          );
+
+          if (!doctor) continue;
+
+          for (const req of unresolvedReqs) {
+            assignments.push({
+              id: generateId(),
+              date: req.date,
+              roomId: req.roomId,
+              roomName: req.roomName,
+              timeSlot: req.timeSlot,
+              doctorId: doctor.id,
+              doctorName: doctor.name,
+            });
+
+            doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
+            if (req.isWeekendOrHoliday) {
+              doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
+            }
+            if (req.isCritical) {
+              doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
+            }
+            doctorRoomCounts.get(doctor.id)!.set(req.roomId, (doctorRoomCounts.get(doctor.id)!.get(req.roomId) || 0) + 1);
+            doctorTimeSlotCounts.get(doctor.id)!.set(req.timeSlot, (doctorTimeSlotCounts.get(doctor.id)!.get(req.timeSlot) || 0) + 1);
+            doctorLastRoom.get(doctor.id)!.set(req.date, req.roomId);
+            if (req.requiresNextDayRest) {
+              const nextDay = parseDateLocal(req.date);
+              nextDay.setDate(nextDay.getDate() + 1);
+              const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+              doctorRestDays.get(doctor.id)!.add(nextDayStr);
+            }
+            if (req.isFullDayExclusive) {
+              doctorExclusiveDays.get(doctor.id)!.add(req.date);
+            }
+
+            processedRequirementIds.add(`${req.date}-${req.roomId}-${req.timeSlot}`);
           }
         }
       }
@@ -800,15 +786,14 @@ export class ScheduleGeneratorService {
         return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
       });
 
-      // Expand requirements by remaining count (subtract pre-filled)
+      // Filter out requirements already satisfied by pre-filled assignments
       const expandedSlots: { req: SlotRequirement; slotIndex: number }[] = [];
       for (const req of sortedRequirements) {
-        const prefilled = assignments.filter(
+        const hasLocked = assignments.some(
           a => a.locked && a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
-        ).length;
-        const remaining = Math.max(0, req.count - prefilled);
-        for (let i = 0; i < remaining; i++) {
-          expandedSlots.push({ req, slotIndex: i });
+        );
+        if (!hasLocked) {
+          expandedSlots.push({ req, slotIndex: 0 });
         }
       }
 
@@ -1032,52 +1017,50 @@ export class ScheduleGeneratorService {
       return (randomFactors.get(a.id) || 0) - (randomFactors.get(b.id) || 0);
     });
 
-    // Reduce count by pre-filled assignments already satisfying this requirement
-    const prefilledForSlot = assignments.filter(
+    // Skip if already satisfied by a pre-filled assignment
+    const hasLocked = assignments.some(
       a => a.locked && a.date === requirement.date && a.roomId === requirement.roomId && a.timeSlot === requirement.timeSlot
-    ).length;
-    const remainingCount = requirement.count - prefilledForSlot;
+    );
+    if (hasLocked || sortedDoctors.length === 0) return;
 
-    for (let i = 0; i < remainingCount && i < sortedDoctors.length; i++) {
-      const doctor = sortedDoctors[i];
-      assignments.push({
-        id: generateId(),
-        date: requirement.date,
-        roomId: requirement.roomId,
-        roomName: requirement.roomName,
-        timeSlot: requirement.timeSlot,
-        doctorId: doctor.id,
-        doctorName: doctor.name,
-      });
+    const doctor = sortedDoctors[0];
+    assignments.push({
+      id: generateId(),
+      date: requirement.date,
+      roomId: requirement.roomId,
+      roomName: requirement.roomName,
+      timeSlot: requirement.timeSlot,
+      doctorId: doctor.id,
+      doctorName: doctor.name,
+    });
 
-      doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
+    doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
 
-      if (requirement.isWeekendOrHoliday) {
-        doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
-      }
+    if (requirement.isWeekendOrHoliday) {
+      doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
+    }
 
-      if (requirement.isCritical) {
-        doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
-      }
+    if (requirement.isCritical) {
+      doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
+    }
 
-      const roomCounts = doctorRoomCounts.get(doctor.id)!;
-      roomCounts.set(requirement.roomId, (roomCounts.get(requirement.roomId) || 0) + 1);
+    const roomCounts = doctorRoomCounts.get(doctor.id)!;
+    roomCounts.set(requirement.roomId, (roomCounts.get(requirement.roomId) || 0) + 1);
 
-      const timeSlotCounts = doctorTimeSlotCounts.get(doctor.id)!;
-      timeSlotCounts.set(requirement.timeSlot, (timeSlotCounts.get(requirement.timeSlot) || 0) + 1);
+    const timeSlotCounts = doctorTimeSlotCounts.get(doctor.id)!;
+    timeSlotCounts.set(requirement.timeSlot, (timeSlotCounts.get(requirement.timeSlot) || 0) + 1);
 
-      doctorLastRoom.get(doctor.id)!.set(requirement.date, requirement.roomId);
+    doctorLastRoom.get(doctor.id)!.set(requirement.date, requirement.roomId);
 
-      if (requirement.requiresNextDayRest) {
-        const nextDay = parseDateLocal(requirement.date);
-        nextDay.setDate(nextDay.getDate() + 1);
-        const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-        doctorRestDays.get(doctor.id)!.add(nextDayStr);
-      }
+    if (requirement.requiresNextDayRest) {
+      const nextDay = parseDateLocal(requirement.date);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+      doctorRestDays.get(doctor.id)!.add(nextDayStr);
+    }
 
-      if (requirement.isFullDayExclusive) {
-        doctorExclusiveDays.get(doctor.id)!.add(requirement.date);
-      }
+    if (requirement.isFullDayExclusive) {
+      doctorExclusiveDays.get(doctor.id)!.add(requirement.date);
     }
   }
 
