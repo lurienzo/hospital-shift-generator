@@ -660,6 +660,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                                 <span className="pf-cell-empty">+</span>
                               )}
                               {isSelected && <span className="pf-cell-empty">...</span>}
+                              {maxDoctors > 1 && <span className="pf-cell-count">{maxDoctors}</span>}
                             </div>
                           );
                         })
