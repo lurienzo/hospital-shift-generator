@@ -197,6 +197,15 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
     );
   };
 
+  const updateConsecutiveStartDay = (roomId: string, value: Weekday | undefined) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        return { ...room, consecutiveStartDay: value };
+      })
+    );
+  };
+
   const addMultipleSlots = (roomId: string, weekdays: Weekday[], timeSlots: TimeSlot[]) => {
     onRoomsChange(
       rooms.map(room => {
@@ -425,10 +434,23 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                         }}
                         disabled={(room.dayGroups || []).length > 0}
                       />
+                      <select
+                        value={room.consecutiveStartDay || ''}
+                        onChange={(event) => {
+                          updateConsecutiveStartDay(room.id, event.target.value ? event.target.value as Weekday : undefined);
+                        }}
+                        disabled={!room.consecutiveShifts || (room.dayGroups || []).length > 0}
+                        title="Giorno di inizio rotazione"
+                      >
+                        <option value="">Inizio auto</option>
+                        {WEEKDAYS.map(wd => (
+                          <option key={wd} value={wd}>{WEEKDAY_LABELS[wd]}</option>
+                        ))}
+                      </select>
                       {room.consecutiveShifts && (
                         <button
                           className="btn-clear"
-                          onClick={() => updateConsecutiveShifts(room.id, undefined)}
+                          onClick={() => { updateConsecutiveShifts(room.id, undefined); updateConsecutiveStartDay(room.id, undefined); }}
                           title="Rimuovi vincolo"
                         >
                           ✕
