@@ -812,9 +812,43 @@ export class ScheduleGeneratorService {
         }
       }
 
-      // Group expanded slots into blocks of consecutiveShifts
-      for (let blockStart = 0; blockStart < expandedSlots.length; blockStart += consecutiveShifts) {
-        const blockSlots = expandedSlots.slice(blockStart, blockStart + consecutiveShifts);
+      // Group expanded slots into blocks
+      // If a start day is specified, group by week boundaries aligned to that day
+      const blocks: { req: SlotRequirement; slotIndex: number }[][] = [];
+      if (room.consecutiveStartDay) {
+        const startDayIndex = WEEKDAYS.indexOf(room.consecutiveStartDay);
+        let currentBlock: { req: SlotRequirement; slotIndex: number }[] = [];
+        let currentBlockStartDate: string | null = null;
+
+        for (const slot of expandedSlots) {
+          const date = parseDateLocal(slot.req.date);
+          // Calculate which "week" this date belongs to, relative to the start day
+          const dayOfWeek = (date.getDay() + 6) % 7; // Monday=0 ... Sunday=6
+          const isNewBlock = currentBlockStartDate !== null && (
+            dayOfWeek === startDayIndex && slot.req.date !== currentBlockStartDate
+          );
+
+          if (isNewBlock && currentBlock.length > 0) {
+            blocks.push(currentBlock);
+            currentBlock = [];
+          }
+
+          if (currentBlock.length === 0) {
+            currentBlockStartDate = slot.req.date;
+          }
+          currentBlock.push(slot);
+        }
+        if (currentBlock.length > 0) {
+          blocks.push(currentBlock);
+        }
+      } else {
+        // Simple fixed-size blocks
+        for (let blockStart = 0; blockStart < expandedSlots.length; blockStart += consecutiveShifts) {
+          blocks.push(expandedSlots.slice(blockStart, blockStart + consecutiveShifts));
+        }
+      }
+
+      for (const blockSlots of blocks) {
         if (blockSlots.length === 0) continue;
 
         // Find best doctor for this block

@@ -451,6 +451,20 @@
   cursor: not-allowed;
 }
 
+.constraint-input select {
+  padding: 0.5rem 0.75rem;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.constraint-input select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-clear {
   width: 24px;
   height: 24px;
