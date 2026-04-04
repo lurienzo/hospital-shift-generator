@@ -1087,6 +1087,10 @@
   opacity: 0.8;
 }
 
+.assignment-chip-mini.has-notice {
+  opacity: 0.9;
+}
+
 .room-abbr {
   font-weight: 600;
   color: var(--text);
@@ -1104,6 +1108,14 @@
 }
 
 /* ========== Locked Assignments ========== */
+
+.assignment-chip.has-notice {
+  box-shadow: inset 0 0 0 1px rgba(241, 196, 15, 0.3);
+}
+
+.assignment-chip.has-warning {
+  box-shadow: inset 0 0 0 1px rgba(231, 76, 60, 0.4);
+}
 
 .assignment-chip.locked {
   border-style: dashed;
@@ -1244,6 +1256,10 @@
 
 .monthly-grid-assignment.has-warning {
   outline: 1px solid rgba(231, 76, 60, 0.5);
+}
+
+.monthly-grid-assignment.has-notice {
+  outline: 1px dashed rgba(241, 196, 15, 0.4);
 }
 
 .monthly-grid-assignment .warning-dot {
