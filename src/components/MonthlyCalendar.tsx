@@ -124,13 +124,21 @@ export function MonthlyCalendar({
     return sortDirection === 'asc' ? ' ↑' : ' ↓';
   };
 
-  const doctorDateExclusions = useMemo(() => {
-    if (!schedule) return {};
-    const config = StorageService.loadGenerationConfig(schedule.year, schedule.month);
-    return config?.doctorDateExclusions || {};
+  const generationConfig = useMemo(() => {
+    if (!schedule) return null;
+    return StorageService.loadGenerationConfig(schedule.year, schedule.month);
   }, [schedule?.year, schedule?.month, schedule]);
 
-  const isDoctorOnVacation = (date: string, doctorId: string): boolean => {
+  const doctorDateExclusions = generationConfig?.doctorDateExclusions || {};
+  const doctorDateAvailability = generationConfig?.doctorDateAvailability || {};
+  const doctorAvailabilityMode = generationConfig?.doctorAvailabilityMode || {};
+
+  const isDoctorDateBlocked = (date: string, doctorId: string): boolean => {
+    const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
+    if (mode === 'availability') {
+      const available = doctorDateAvailability[doctorId] || [];
+      return available.length > 0 && !available.includes(date);
+    }
     const exclusions = doctorDateExclusions[doctorId] || [];
     return exclusions.includes(date);
   };
@@ -221,8 +229,8 @@ export function MonthlyCalendar({
   };
 
   const getAssignmentInvalidReason = (assignment: Assignment): string | null => {
-    if (isDoctorOnVacation(assignment.date, assignment.doctorId)) {
-      return 'Ferie';
+    if (isDoctorDateBlocked(assignment.date, assignment.doctorId)) {
+      return 'Non disponibile';
     }
 
     if (isDoctorOnRestDay(assignment.date, assignment.doctorId)) {
@@ -248,7 +256,7 @@ export function MonthlyCalendar({
   const invalidAssignments = useMemo(() => {
     if (!schedule) return [];
     return schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
-  }, [schedule, rooms, doctorDateExclusions]);
+  }, [schedule, rooms, generationConfig]);
 
   const getNextDayStr = (date: string): string => {
     const currentDate = new Date(date);
@@ -370,14 +378,14 @@ export function MonthlyCalendar({
     let warning1: string | null = null;
     let warning2: string | null = null;
 
-    if (isDoctorOnVacation(assignment2.date, assignment1.doctorId)) {
-      warning1 = 'Ferie';
+    if (isDoctorDateBlocked(assignment2.date, assignment1.doctorId)) {
+      warning1 = 'Non disponibile';
     } else if (isDoctorOnRestDay(assignment2.date, assignment1.doctorId)) {
       warning1 = 'Smontante';
     }
 
-    if (isDoctorOnVacation(assignment1.date, assignment2.doctorId)) {
-      warning2 = 'Ferie';
+    if (isDoctorDateBlocked(assignment1.date, assignment2.doctorId)) {
+      warning2 = 'Non disponibile';
     } else if (isDoctorOnRestDay(assignment1.date, assignment2.doctorId)) {
       warning2 = 'Smontante';
     }
@@ -779,7 +787,7 @@ export function MonthlyCalendar({
                                       const sameDayConflicts = isExclusiveShift ? getDoctorSameDayOtherAssignmentsCount(dateStr, doctor.id, assignment.id) : 0;
                                       const isOnRestDay = isDoctorOnRestDay(dateStr, doctor.id);
                                       const hasExclusiveConflict = hasDoctorExclusiveShiftOnDay(dateStr, doctor.id) && !isCurrent;
-                                      const isOnVacation = isDoctorOnVacation(dateStr, doctor.id);
+                                      const isOnVacation = isDoctorDateBlocked(dateStr, doctor.id);
                                       const hasWarning = (nextDayConflicts > 0 || sameDayConflicts > 0 || isOnRestDay || hasExclusiveConflict || isOnVacation) && !isCurrent;
                                       
                                       let warningText = '';
@@ -875,7 +883,7 @@ export function MonthlyCalendar({
                       .filter(a => a.date === dateStr && a.doctorId === doctor.id)
                       .sort((a, b) => TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot]);
                     
-                    const isOnVacation = isDoctorOnVacation(dateStr, doctor.id);
+                    const isOnVacation = isDoctorDateBlocked(dateStr, doctor.id);
                     const isOnRestDay = isDoctorOnRestDay(dateStr, doctor.id);
 
                     return (
@@ -975,7 +983,7 @@ export function MonthlyCalendar({
                     const nextDayConflicts = isRestShift ? getDoctorNextDayAssignmentsCount(showAddModal.date, doctor.id) : 0;
                     const sameDayConflicts = isExclusiveShift ? getDoctorSameDayOtherAssignmentsCount(showAddModal.date, doctor.id) : 0;
                     const hasExclusiveConflict = hasDoctorExclusiveShiftOnDay(showAddModal.date, doctor.id);
-                    const isOnVacation = isDoctorOnVacation(showAddModal.date, doctor.id);
+                    const isOnVacation = isDoctorDateBlocked(showAddModal.date, doctor.id);
                     const hasWarning = isOnRestDay || nextDayConflicts > 0 || sameDayConflicts > 0 || hasExclusiveConflict || isOnVacation;
                     
                     let warningText = '';

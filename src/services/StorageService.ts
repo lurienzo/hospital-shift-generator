@@ -1,4 +1,4 @@
-import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey } from '../models/types';
+import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey, DoctorDateMode } from '../models/types';
 import { generateId } from '../utils/idGenerator';
 import { parseDateLocal } from '../utils/constants';
 
@@ -15,6 +15,8 @@ export interface StoredGenerationConfig {
   month: number;
   holidays: HolidayConfig[];
   doctorDateExclusions: Record<string, string[]>;
+  doctorDateAvailability: Record<string, string[]>;
+  doctorAvailabilityMode: Record<string, DoctorDateMode>;
 }
 
 export class StorageService {
@@ -55,7 +57,12 @@ export class StorageService {
   static loadGenerationConfig(year: number, month: number): StoredGenerationConfig | null {
     const allConfigs = this.loadAllGenerationConfigs();
     const key = `${year}-${month}`;
-    return allConfigs[key] || null;
+    const config = allConfigs[key];
+    if (!config) return null;
+    // Backfill fields for backward compatibility with older saved configs
+    config.doctorDateAvailability = config.doctorDateAvailability || {};
+    config.doctorAvailabilityMode = config.doctorAvailabilityMode || {};
+    return config;
   }
 
   private static loadAllGenerationConfigs(): Record<string, StoredGenerationConfig> {
