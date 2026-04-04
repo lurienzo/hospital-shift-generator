@@ -178,11 +178,13 @@ export class ScheduleGeneratorService {
     let warnings = 0;
 
     const restDays = new Map<string, Set<string>>();
+    const secondRestDays = new Map<string, Set<string>>();
     const exclusiveDays = new Map<string, Set<string>>();
     const doctorMap = new Map<string, Doctor>();
 
     for (const doctor of this.doctors) {
       restDays.set(doctor.id, new Set());
+      secondRestDays.set(doctor.id, new Set());
       exclusiveDays.set(doctor.id, new Set());
       doctorMap.set(doctor.id, doctor);
     }
@@ -203,10 +205,8 @@ export class ScheduleGeneratorService {
         const room = this.rooms.find(r => r.id === assignment.roomId);
         const slot = room?.slots.find(s => s.timeSlot === assignment.timeSlot);
         if (slot?.requiresNextDayRest) {
-          const nextDay = parseDateLocal(assignment.date);
-          nextDay.setDate(nextDay.getDate() + 1);
-          const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-          restDays.get(assignment.doctorId)?.add(nextDayStr);
+          restDays.get(assignment.doctorId)?.add(this.getDateOffset(assignment.date, 1));
+          secondRestDays.get(assignment.doctorId)?.add(this.getDateOffset(assignment.date, 2));
         }
         if (slot?.isFullDayExclusive) {
           exclusiveDays.get(assignment.doctorId)?.add(assignment.date);
@@ -242,8 +242,13 @@ export class ScheduleGeneratorService {
       }
       doctorSlotKeys.add(slotKey);
 
-      // Rest day violation
+      // Rest day violation (hard — smontante)
       if (restDays.get(assignment.doctorId)?.has(assignment.date)) {
+        warnings++;
+      }
+
+      // Second rest day violation (soft — riposo, counts as half a warning)
+      if (secondRestDays.get(assignment.doctorId)?.has(assignment.date)) {
         warnings++;
       }
 
@@ -251,10 +256,8 @@ export class ScheduleGeneratorService {
       const slot = room?.slots.find(s => s.timeSlot === assignment.timeSlot);
 
       if (slot?.requiresNextDayRest) {
-        const nextDay = parseDateLocal(assignment.date);
-        nextDay.setDate(nextDay.getDate() + 1);
-        const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-        restDays.get(assignment.doctorId)!.add(nextDayStr);
+        restDays.get(assignment.doctorId)!.add(this.getDateOffset(assignment.date, 1));
+        secondRestDays.get(assignment.doctorId)!.add(this.getDateOffset(assignment.date, 2));
       }
 
       if (slot?.isFullDayExclusive) {
@@ -390,6 +393,12 @@ export class ScheduleGeneratorService {
     const dayIndex = date.getDay();
     const mapping: Weekday[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
     return mapping[dayIndex];
+  }
+
+  private getDateOffset(dateStr: string, offsetDays: number): string {
+    const d = parseDateLocal(dateStr);
+    d.setDate(d.getDate() + offsetDays);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   private isDoctorDateBlocked(doctorId: string, date: string): boolean {

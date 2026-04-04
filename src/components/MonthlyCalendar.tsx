@@ -208,6 +208,29 @@ export function MonthlyCalendar({
     return false;
   };
 
+  const isDoctorOnSecondRestDay = (date: string, doctorId: string): boolean => {
+    if (!schedule) return false;
+    const currentDate = new Date(date);
+    const twoDaysAgo = new Date(currentDate);
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    const twoDaysAgoStr = `${twoDaysAgo.getFullYear()}-${String(twoDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(twoDaysAgo.getDate()).padStart(2, '0')}`;
+
+    const twoDaysAgoAssignments = schedule.assignments.filter(
+      a => a.date === twoDaysAgoStr && a.doctorId === doctorId
+    );
+
+    for (const assignment of twoDaysAgoAssignments) {
+      const room = rooms.find(r => r.id === assignment.roomId);
+      if (room) {
+        const slot = room.slots.find(s => s.timeSlot === assignment.timeSlot);
+        if (slot?.requiresNextDayRest) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   const getDoctorUnavailabilityReason = (date: string, timeSlot: TimeSlot, doctorId: string, excludeAssignmentId?: string): string | null => {
     if (isDoctorAlreadyAssigned(date, timeSlot, doctorId, excludeAssignmentId)) {
       return 'Occupato';
@@ -236,6 +259,10 @@ export function MonthlyCalendar({
 
     if (isDoctorOnRestDay(assignment.date, assignment.doctorId)) {
       return 'Smontante';
+    }
+
+    if (isDoctorOnSecondRestDay(assignment.date, assignment.doctorId)) {
+      return 'Riposo';
     }
 
     const isThisExclusive = isFullDayExclusiveShift(assignment.roomId, assignment.timeSlot);
@@ -383,12 +410,16 @@ export function MonthlyCalendar({
       warning1 = 'Non disponibile';
     } else if (isDoctorOnRestDay(assignment2.date, assignment1.doctorId)) {
       warning1 = 'Smontante';
+    } else if (isDoctorOnSecondRestDay(assignment2.date, assignment1.doctorId)) {
+      warning1 = 'Riposo';
     }
 
     if (isDoctorDateBlocked(assignment1.date, assignment2.doctorId)) {
       warning2 = 'Non disponibile';
     } else if (isDoctorOnRestDay(assignment1.date, assignment2.doctorId)) {
       warning2 = 'Smontante';
+    } else if (isDoctorOnSecondRestDay(assignment1.date, assignment2.doctorId)) {
+      warning2 = 'Riposo';
     }
 
     return { for1: warning1, for2: warning2 };
