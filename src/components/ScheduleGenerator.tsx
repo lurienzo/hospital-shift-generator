@@ -559,8 +559,9 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
             </div>
           )}
         </div>
+      </div>
 
-        <div className="config-block prefilled-config">
+      <div className="config-block prefilled-config">
           <h3>
             🔒 Turni Pre-compilati
             {prefilledAssignments.length > 0 && (
@@ -717,7 +718,6 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
               </div>
             </div>
           )}
-        </div>
       </div>
     </div>
   );
