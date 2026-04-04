@@ -324,30 +324,24 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                             >
                               {slot ? (
                                 <div className="slot-content">
-                                  <button className="btn-remove-slot" onClick={() => removeSlot(room.id, slot.id)} title="Rimuovi turno">✕</button>
-                                  <div className="slot-flags">
+                                  <div className="slot-flags-inline">
                                     <button
-                                      className={`btn-flag ${slot.isCritical ? 'active' : ''}`}
-                                      onClick={() => toggleCritical(room.id, slot.id)}
-                                      title={slot.isCritical ? 'Turno critico (bilanciato)' : 'Segna come critico'}
-                                    >
-                                      ⚠️
-                                    </button>
+                                      className={`btn-flag-sm ${slot.isCritical ? 'active' : ''}`}
+                                      onClick={(e) => { e.stopPropagation(); toggleCritical(room.id, slot.id); }}
+                                      title={slot.isCritical ? 'Critico' : 'Segna critico'}
+                                    >⚠️</button>
                                     <button
-                                      className={`btn-flag ${slot.requiresNextDayRest ? 'active' : ''}`}
-                                      onClick={() => toggleNextDayRest(room.id, slot.id)}
-                                      title={slot.requiresNextDayRest ? 'Smontante: riposo giorno dopo' : 'Segna come smontante'}
-                                    >
-                                      😴
-                                    </button>
+                                      className={`btn-flag-sm ${slot.requiresNextDayRest ? 'active' : ''}`}
+                                      onClick={(e) => { e.stopPropagation(); toggleNextDayRest(room.id, slot.id); }}
+                                      title={slot.requiresNextDayRest ? 'Smontante' : 'Segna smontante'}
+                                    >😴</button>
                                     <button
-                                      className={`btn-flag ${slot.isFullDayExclusive ? 'active' : ''}`}
-                                      onClick={() => toggleFullDayExclusive(room.id, slot.id)}
-                                      title={slot.isFullDayExclusive ? 'Esclusivo: nessun altro turno nel giorno' : 'Segna come esclusivo'}
-                                    >
-                                      🚫
-                                    </button>
+                                      className={`btn-flag-sm ${slot.isFullDayExclusive ? 'active' : ''}`}
+                                      onClick={(e) => { e.stopPropagation(); toggleFullDayExclusive(room.id, slot.id); }}
+                                      title={slot.isFullDayExclusive ? 'Esclusivo' : 'Segna esclusivo'}
+                                    >🚫</button>
                                   </div>
+                                  <button className="btn-remove-sm" onClick={() => removeSlot(room.id, slot.id)} title="Rimuovi">✕</button>
                                 </div>
                               ) : (
                                 <button
