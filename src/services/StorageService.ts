@@ -1,5 +1,6 @@
 import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey } from '../models/types';
 import { generateId } from '../utils/idGenerator';
+import { parseDateLocal } from '../utils/constants';
 
 const STORAGE_KEYS = {
   ROOMS: 'hospital_shift_rooms',
@@ -417,7 +418,7 @@ export class StorageService {
         totalHours += TIME_SLOT_HOURS[assignment.timeSlot] || 0;
 
         // Weekend check
-        const date = new Date(assignment.date);
+        const date = parseDateLocal(assignment.date);
         if (date.getDay() === 0 || date.getDay() === 6) {
           weekendShifts++;
         }
@@ -573,9 +574,11 @@ export class StorageService {
     const csv = this.exportToCSV(schedule, rooms, doctors);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    link.href = url;
     link.download = `turni_${schedule.year}_${schedule.month}.csv`;
     link.click();
+    URL.revokeObjectURL(url);
   }
 
   static clearAll(): void {

@@ -15,6 +15,7 @@ import {
   WEEKDAYS,
 } from '../models/types';
 import { generateId } from '../utils/idGenerator';
+import { parseDateLocal } from '../utils/constants';
 
 interface SlotRequirement {
   date: string;
@@ -179,10 +180,12 @@ export class ScheduleGeneratorService {
 
     const restDays = new Map<string, Set<string>>();
     const exclusiveDays = new Map<string, Set<string>>();
+    const doctorMap = new Map<string, Doctor>();
 
     for (const doctor of this.doctors) {
       restDays.set(doctor.id, new Set());
       exclusiveDays.set(doctor.id, new Set());
+      doctorMap.set(doctor.id, doctor);
     }
 
     const sortedAssignments = [...schedule.assignments].sort((a, b) => {
@@ -191,12 +194,40 @@ export class ScheduleGeneratorService {
       return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
     });
 
+    // Track assignments per doctor per date+timeSlot (same-slot double-booking)
+    const doctorSlotKeys = new Set<string>();
+
     for (const assignment of sortedAssignments) {
+      const doctor = doctorMap.get(assignment.doctorId);
+
+      // Excluded date
       const doctorExclusions = this.config.doctorDateExclusions[assignment.doctorId] || [];
       if (doctorExclusions.includes(assignment.date)) {
         warnings++;
       }
 
+      // Excluded room
+      if (doctor?.excludedRooms.includes(assignment.roomId)) {
+        warnings++;
+      }
+
+      // Excluded weekday
+      if (doctor) {
+        const date = parseDateLocal(assignment.date);
+        const weekday = this.getWeekday(date);
+        if (doctor.excludedWeekdays.includes(weekday)) {
+          warnings++;
+        }
+      }
+
+      // Same doctor assigned to same time slot twice on same day
+      const slotKey = `${assignment.doctorId}-${assignment.date}-${assignment.timeSlot}`;
+      if (doctorSlotKeys.has(slotKey)) {
+        warnings++;
+      }
+      doctorSlotKeys.add(slotKey);
+
+      // Rest day violation
       if (restDays.get(assignment.doctorId)?.has(assignment.date)) {
         warnings++;
       }
@@ -205,7 +236,7 @@ export class ScheduleGeneratorService {
       const slot = room?.slots.find(s => s.timeSlot === assignment.timeSlot);
 
       if (slot?.requiresNextDayRest) {
-        const nextDay = new Date(assignment.date);
+        const nextDay = parseDateLocal(assignment.date);
         nextDay.setDate(nextDay.getDate() + 1);
         const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
         restDays.get(assignment.doctorId)!.add(nextDayStr);
@@ -216,6 +247,17 @@ export class ScheduleGeneratorService {
           warnings++;
         }
         exclusiveDays.get(assignment.doctorId)!.add(assignment.date);
+      }
+    }
+
+    // Check for understaffed slots
+    const requirements = this.buildRequirements();
+    for (const req of requirements) {
+      const assignedCount = schedule.assignments.filter(
+        a => a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
+      ).length;
+      if (assignedCount < req.count) {
+        warnings++;
       }
     }
 
@@ -245,6 +287,7 @@ export class ScheduleGeneratorService {
         ...s,
         totalShifts: s.totalShifts + priorStat.totalShifts,
         totalHours: s.totalHours + priorStat.totalHours,
+        distinctDays: s.distinctDays + (priorStat.totalShifts > 0 ? priorStat.totalShifts : 0),
         weekendShifts: s.weekendShifts + priorStat.weekendShifts,
         criticalShifts: s.criticalShifts + priorStat.criticalShifts,
         shiftsByRoom: combinedShiftsByRoom,
@@ -336,7 +379,7 @@ export class ScheduleGeneratorService {
   }
 
   private createSeededRandom(seed: number): () => number {
-    let state = seed * 2147483647;
+    let state = Math.max(1, Math.floor(seed * 2147483646) + 1);
     return () => {
       state = (state * 16807) % 2147483647;
       return (state - 1) / 2147483646;
@@ -384,7 +427,7 @@ export class ScheduleGeneratorService {
     this.assignDayGroupRequirements(
       requirements, assignments, doctorShiftCounts, doctorWeekendCounts, doctorCriticalCounts,
       doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays,
-      processedRequirementIds
+      processedRequirementIds, seededRandom
     );
 
     // Second: assign consecutive shifts (N shifts in a row per doctor)
@@ -470,7 +513,8 @@ export class ScheduleGeneratorService {
     doctorLastRoom: Map<string, Map<string, string>>,
     doctorRestDays: Map<string, Set<string>>,
     doctorExclusiveDays: Map<string, Set<string>>,
-    processedRequirementIds: Set<string>
+    processedRequirementIds: Set<string>,
+    seededRandom: () => number
   ): void {
     for (const room of this.rooms) {
       const dayGroups = room.dayGroups || [];
@@ -490,7 +534,8 @@ export class ScheduleGeneratorService {
           for (let doctorSlot = 0; doctorSlot < maxDoctorsNeeded; doctorSlot++) {
             const doctor = this.findBestDoctorForDayGroup(
               instanceRequirements, assignments, doctorShiftCounts, doctorWeekendCounts,
-              doctorCriticalCounts, doctorRoomCounts, doctorRestDays, doctorExclusiveDays
+              doctorCriticalCounts, doctorRoomCounts, doctorRestDays, doctorExclusiveDays,
+              seededRandom
             );
 
             if (!doctor) continue;
@@ -525,7 +570,7 @@ export class ScheduleGeneratorService {
               doctorTimeSlotCounts.get(doctor.id)!.set(req.timeSlot, (doctorTimeSlotCounts.get(doctor.id)!.get(req.timeSlot) || 0) + 1);
               doctorLastRoom.get(doctor.id)!.set(req.date, req.roomId);
               if (req.requiresNextDayRest) {
-                const nextDay = new Date(req.date);
+                const nextDay = parseDateLocal(req.date);
                 nextDay.setDate(nextDay.getDate() + 1);
                 const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
                 doctorRestDays.get(doctor.id)!.add(nextDayStr);
@@ -600,7 +645,8 @@ export class ScheduleGeneratorService {
     _doctorCriticalCounts: Map<string, number>,
     doctorRoomCounts: Map<string, Map<string, number>>,
     doctorRestDays: Map<string, Set<string>>,
-    doctorExclusiveDays: Map<string, Set<string>>
+    doctorExclusiveDays: Map<string, Set<string>>,
+    seededRandom: () => number
   ): Doctor | null {
     const groupDates = [...new Set(groupRequirements.map(r => r.date))];
     const roomId = groupRequirements[0]?.roomId;
@@ -609,7 +655,7 @@ export class ScheduleGeneratorService {
       if (doctor.excludedRooms.includes(roomId)) return false;
 
       for (const req of groupRequirements) {
-        const date = new Date(req.date);
+        const date = parseDateLocal(req.date);
         const weekday = this.getWeekday(date);
         if (doctor.excludedWeekdays.includes(weekday)) return false;
 
@@ -635,6 +681,11 @@ export class ScheduleGeneratorService {
 
     if (eligibleDoctors.length === 0) return null;
 
+    const randomFactors = new Map<string, number>();
+    for (const doctor of eligibleDoctors) {
+      randomFactors.set(doctor.id, seededRandom());
+    }
+
     const sortedDoctors = [...eligibleDoctors].sort((a, b) => {
       const aShifts = doctorShiftCounts.get(a.id) || 0;
       const bShifts = doctorShiftCounts.get(b.id) || 0;
@@ -642,7 +693,9 @@ export class ScheduleGeneratorService {
 
       const aRoomCount = doctorRoomCounts.get(a.id)!.get(roomId) || 0;
       const bRoomCount = doctorRoomCounts.get(b.id)!.get(roomId) || 0;
-      return aRoomCount - bRoomCount;
+      if (aRoomCount !== bRoomCount) return aRoomCount - bRoomCount;
+
+      return (randomFactors.get(a.id) || 0) - (randomFactors.get(b.id) || 0);
     });
 
     return sortedDoctors[0] || null;
@@ -737,7 +790,7 @@ export class ScheduleGeneratorService {
           doctorTimeSlotCounts.get(doctor.id)!.set(req.timeSlot, (doctorTimeSlotCounts.get(doctor.id)!.get(req.timeSlot) || 0) + 1);
           doctorLastRoom.get(doctor.id)!.set(req.date, req.roomId);
           if (req.requiresNextDayRest) {
-            const nextDay = new Date(req.date);
+            const nextDay = parseDateLocal(req.date);
             nextDay.setDate(nextDay.getDate() + 1);
             const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
             doctorRestDays.get(doctor.id)!.add(nextDayStr);
@@ -769,7 +822,7 @@ export class ScheduleGeneratorService {
       if (doctor.excludedRooms.includes(roomId)) return false;
 
       for (const req of blockRequirements) {
-        const date = new Date(req.date);
+        const date = parseDateLocal(req.date);
         const weekday = this.getWeekday(date);
         if (doctor.excludedWeekdays.includes(weekday)) return false;
 
@@ -836,7 +889,7 @@ export class ScheduleGeneratorService {
     doctorExclusiveDays: Map<string, Set<string>>,
     seededRandom: () => number
   ): void {
-    const date = new Date(requirement.date);
+    const date = parseDateLocal(requirement.date);
     const weekday = this.getWeekday(date);
 
     const eligibleDoctors = this.doctors.filter(doctor => {
@@ -939,7 +992,7 @@ export class ScheduleGeneratorService {
       doctorLastRoom.get(doctor.id)!.set(requirement.date, requirement.roomId);
 
       if (requirement.requiresNextDayRest) {
-        const nextDay = new Date(requirement.date);
+        const nextDay = parseDateLocal(requirement.date);
         nextDay.setDate(nextDay.getDate() + 1);
         const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
         doctorRestDays.get(doctor.id)!.add(nextDayStr);
@@ -976,7 +1029,7 @@ export class ScheduleGeneratorService {
       };
 
       const weekendShifts = doctorAssignments.filter(a => {
-        const date = new Date(a.date);
+        const date = parseDateLocal(a.date);
         const dayOfWeek = date.getDay();
         return dayOfWeek === 0 || dayOfWeek === 6 || schedule.holidays.includes(a.date);
       }).length;
@@ -1067,7 +1120,7 @@ export class ScheduleGeneratorService {
         stats.totalHours += TIME_SLOT_HOURS[assignment.timeSlot];
 
         // Weekend/holiday shifts
-        const date = new Date(assignment.date);
+        const date = parseDateLocal(assignment.date);
         if (date.getDay() === 0 || date.getDay() === 6 || schedule.holidays.includes(assignment.date)) {
           stats.weekendShifts++;
         }

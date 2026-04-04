@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Doctor, OperativeRoom, TimeSlot, TIME_SLOT_HOURS, getMonthKey } from '../models/types';
 import { StorageService } from '../services/StorageService';
+import { MONTH_NAMES_SHORT, MONTH_NAMES_FULL } from '../utils/constants';
 import './GeneralStats.css';
 
 interface GeneralStatsProps {
@@ -22,7 +23,7 @@ interface AggregatedDoctorStats {
   shiftsByMonth: Record<string, number>;
 }
 
-type SortColumn = 'name' | 'shifts' | 'hours' | 'days' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | string;
+type SortColumn = 'name' | 'shifts' | 'hours' | 'days' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | `room-${string}` | `month-${string}`;
 type SortDirection = 'asc' | 'desc';
 
 type BalanceMetric = 
@@ -35,15 +36,9 @@ type BalanceMetric =
   | `room-${string}` 
   | `month-${string}`;
 
-const monthNames = [
-  'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu',
-  'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic',
-];
+const monthNames = MONTH_NAMES_SHORT;
 
-const monthNamesFull = [
-  'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
-  'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre',
-];
+const monthNamesFull = MONTH_NAMES_FULL;
 
 export function GeneralStats({ doctors, rooms }: GeneralStatsProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn>('shifts');
@@ -51,8 +46,10 @@ export function GeneralStats({ doctors, rooms }: GeneralStatsProps) {
   const [balanceMetric, setBalanceMetric] = useState<BalanceMetric>('total');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
-  const activeVersions = useMemo(() => {
-    return StorageService.getAllActiveVersions();
+  // Re-read active versions from localStorage on every mount (tab activation)
+  const [activeVersions, setActiveVersions] = useState(() => StorageService.getAllActiveVersions());
+  useEffect(() => {
+    setActiveVersions(StorageService.getAllActiveVersions());
   }, []);
 
   // Calculate available years

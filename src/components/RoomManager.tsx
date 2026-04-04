@@ -246,7 +246,7 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
   };
 
   const addAllDaySlots = (roomId: string, weekday: Weekday) => {
-    TIME_SLOTS.forEach(timeSlot => addSlot(roomId, weekday, timeSlot));
+    addMultipleSlots(roomId, [weekday], TIME_SLOTS);
   };
 
   const getSlotForCell = (room: OperativeRoom, weekday: Weekday, timeSlot: TimeSlot): ScheduleSlot | undefined => {
@@ -519,7 +519,7 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                   <span className="summary-badge">📊 {room.consecutiveShifts} turni cons.</span>
                 )}
                 {(room.dayGroups || []).length > 0 && (
-                  <span className="summary-badge">🔗 {room.dayGroups.length} gruppi</span>
+                  <span className="summary-badge">🔗 {(room.dayGroups || []).length} gruppi</span>
                 )}
               </div>
             )}

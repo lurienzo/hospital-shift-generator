@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { MonthlySchedule, ScheduleVersion } from '../models/types';
 import { StorageService } from '../services/StorageService';
+import { MONTH_NAMES_FULL } from '../utils/constants';
 import './ScheduleVersionManager.css';
 
 interface ScheduleVersionManagerProps {
@@ -14,10 +15,7 @@ interface ScheduleVersionManagerProps {
   onDuplicateVersion: (sourceVersionId: string, newName: string) => void;
 }
 
-const monthNames = [
-  'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
-  'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre',
-];
+const monthNames = MONTH_NAMES_FULL;
 
 type SaveMode = 'save' | 'save-as' | 'duplicate';
 
