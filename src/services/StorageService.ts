@@ -1,4 +1,4 @@
-import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey, DoctorDateMode } from '../models/types';
+import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey, DoctorDateMode, Assignment } from '../models/types';
 import { generateId } from '../utils/idGenerator';
 import { parseDateLocal } from '../utils/constants';
 
@@ -17,6 +17,7 @@ export interface StoredGenerationConfig {
   doctorDateExclusions: Record<string, string[]>;
   doctorDateAvailability: Record<string, string[]>;
   doctorAvailabilityMode: Record<string, DoctorDateMode>;
+  prefilledAssignments?: Assignment[];
 }
 
 export class StorageService {
@@ -62,6 +63,7 @@ export class StorageService {
     // Backfill fields for backward compatibility with older saved configs
     config.doctorDateAvailability = config.doctorDateAvailability || {};
     config.doctorAvailabilityMode = config.doctorAvailabilityMode || {};
+    config.prefilledAssignments = config.prefilledAssignments || [];
     return config;
   }
 

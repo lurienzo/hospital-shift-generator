@@ -1103,6 +1103,35 @@
   margin-right: 2px;
 }
 
+/* ========== Locked Assignments ========== */
+
+.assignment-chip.locked {
+  border-style: dashed;
+  opacity: 0.85;
+  cursor: default;
+}
+
+.assignment-chip-mini.locked {
+  border-style: dashed;
+  opacity: 0.85;
+  cursor: default;
+}
+
+.monthly-grid-assignment.locked {
+  border-left-style: dashed;
+  opacity: 0.85;
+}
+
+.lock-icon {
+  font-size: 0.625rem;
+  margin-right: 2px;
+}
+
+.lock-icon-mini {
+  font-size: 0.5rem;
+  margin-right: 1px;
+}
+
 /* ========== Monthly Calendar Grid View ========== */
 
 .monthly-grid-container {

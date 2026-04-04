@@ -198,6 +198,23 @@ export class ScheduleGeneratorService {
     const doctorSlotKeys = new Set<string>();
 
     for (const assignment of sortedAssignments) {
+      // Skip constraint checks for pre-filled (locked) assignments — they're intentional
+      if (assignment.locked) {
+        // Still track rest days / exclusive days from locked assignments
+        const room = this.rooms.find(r => r.id === assignment.roomId);
+        const slot = room?.slots.find(s => s.timeSlot === assignment.timeSlot);
+        if (slot?.requiresNextDayRest) {
+          const nextDay = parseDateLocal(assignment.date);
+          nextDay.setDate(nextDay.getDate() + 1);
+          const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+          restDays.get(assignment.doctorId)?.add(nextDayStr);
+        }
+        if (slot?.isFullDayExclusive) {
+          exclusiveDays.get(assignment.doctorId)?.add(assignment.date);
+        }
+        continue;
+      }
+
       const doctor = doctorMap.get(assignment.doctorId);
 
       // Excluded date
@@ -397,7 +414,9 @@ export class ScheduleGeneratorService {
 
   private assignDoctors(requirements: SlotRequirement[], seed: number = Math.random()): Assignment[] {
     const seededRandom = this.createSeededRandom(seed);
-    const assignments: Assignment[] = [];
+    // Seed with pre-filled (locked) assignments
+    const lockedAssignments: Assignment[] = (this.config.prefilledAssignments || []).map(a => ({ ...a, locked: true }));
+    const assignments: Assignment[] = [...lockedAssignments];
     const doctorShiftCounts: Map<string, number> = new Map();
     const doctorWeekendCounts: Map<string, number> = new Map();
     const doctorCriticalCounts: Map<string, number> = new Map();
@@ -410,7 +429,7 @@ export class ScheduleGeneratorService {
     // Initialize with prior stats if available (for year-based balancing)
     for (const doctor of this.doctors) {
       const priorStat = this.priorStats.get(doctor.id);
-      
+
       doctorShiftCounts.set(doctor.id, priorStat?.totalShifts || 0);
       doctorWeekendCounts.set(doctor.id, priorStat?.weekendShifts || 0);
       doctorCriticalCounts.set(doctor.id, priorStat?.criticalShifts || 0);
@@ -419,7 +438,7 @@ export class ScheduleGeneratorService {
       doctorLastRoom.set(doctor.id, new Map());
       doctorRestDays.set(doctor.id, new Set());
       doctorExclusiveDays.set(doctor.id, new Set());
-      
+
       for (const room of this.rooms) {
         const priorRoomCount = priorStat?.shiftsByRoom[room.id] || 0;
         doctorRoomCounts.get(doctor.id)!.set(room.id, priorRoomCount);
@@ -427,6 +446,37 @@ export class ScheduleGeneratorService {
       for (const timeSlot of TIME_SLOTS) {
         const priorTimeSlotCount = priorStat?.shiftsByTimeSlot[timeSlot] || 0;
         doctorTimeSlotCounts.get(doctor.id)!.set(timeSlot, priorTimeSlotCount);
+      }
+    }
+
+    // Seed tracking maps with pre-filled assignment counts
+    for (const pa of lockedAssignments) {
+      if (!doctorShiftCounts.has(pa.doctorId)) continue;
+      doctorShiftCounts.set(pa.doctorId, (doctorShiftCounts.get(pa.doctorId) || 0) + 1);
+
+      const paDate = parseDateLocal(pa.date);
+      if (this.isWeekendOrHoliday(paDate, pa.date)) {
+        doctorWeekendCounts.set(pa.doctorId, (doctorWeekendCounts.get(pa.doctorId) || 0) + 1);
+      }
+
+      const room = this.rooms.find(r => r.id === pa.roomId);
+      const slot = room?.slots.find(s => s.timeSlot === pa.timeSlot);
+      if (slot?.isCritical) {
+        doctorCriticalCounts.set(pa.doctorId, (doctorCriticalCounts.get(pa.doctorId) || 0) + 1);
+      }
+
+      doctorRoomCounts.get(pa.doctorId)?.set(pa.roomId, (doctorRoomCounts.get(pa.doctorId)?.get(pa.roomId) || 0) + 1);
+      doctorTimeSlotCounts.get(pa.doctorId)?.set(pa.timeSlot, (doctorTimeSlotCounts.get(pa.doctorId)?.get(pa.timeSlot) || 0) + 1);
+      doctorLastRoom.get(pa.doctorId)?.set(pa.date, pa.roomId);
+
+      if (slot?.requiresNextDayRest) {
+        const nextDay = parseDateLocal(pa.date);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+        doctorRestDays.get(pa.doctorId)?.add(nextDayStr);
+      }
+      if (slot?.isFullDayExclusive) {
+        doctorExclusiveDays.get(pa.doctorId)?.add(pa.date);
       }
     }
 
@@ -538,7 +588,16 @@ export class ScheduleGeneratorService {
           const instanceRequirements = instance.requirements;
           if (instanceRequirements.length === 0) continue;
 
-          const maxDoctorsNeeded = Math.max(...instanceRequirements.map(r => r.count));
+          // Reduce needed counts by pre-filled assignments
+          const remainingCounts = new Map<string, number>();
+          for (const req of instanceRequirements) {
+            const key = `${req.date}-${req.roomId}-${req.timeSlot}`;
+            const prefilled = assignments.filter(
+              a => a.locked && a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
+            ).length;
+            remainingCounts.set(key, Math.max(0, req.count - prefilled));
+          }
+          const maxDoctorsNeeded = Math.max(...Array.from(remainingCounts.values()), 0);
 
           for (let doctorSlot = 0; doctorSlot < maxDoctorsNeeded; doctorSlot++) {
             const doctor = this.findBestDoctorForDayGroup(
@@ -550,7 +609,9 @@ export class ScheduleGeneratorService {
             if (!doctor) continue;
 
             for (const req of instanceRequirements) {
-              if (req.count <= doctorSlot) continue;
+              const key = `${req.date}-${req.roomId}-${req.timeSlot}`;
+              const remaining = remainingCounts.get(key) || 0;
+              if (remaining <= doctorSlot) continue;
 
               const alreadyAssigned = assignments.some(
                 a => a.date === req.date && a.roomId === req.roomId && 
@@ -739,10 +800,14 @@ export class ScheduleGeneratorService {
         return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
       });
 
-      // Expand requirements by count (if a slot needs 2 doctors, it appears twice)
+      // Expand requirements by remaining count (subtract pre-filled)
       const expandedSlots: { req: SlotRequirement; slotIndex: number }[] = [];
       for (const req of sortedRequirements) {
-        for (let i = 0; i < req.count; i++) {
+        const prefilled = assignments.filter(
+          a => a.locked && a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
+        ).length;
+        const remaining = Math.max(0, req.count - prefilled);
+        for (let i = 0; i < remaining; i++) {
           expandedSlots.push({ req, slotIndex: i });
         }
       }
@@ -967,7 +1032,13 @@ export class ScheduleGeneratorService {
       return (randomFactors.get(a.id) || 0) - (randomFactors.get(b.id) || 0);
     });
 
-    for (let i = 0; i < requirement.count && i < sortedDoctors.length; i++) {
+    // Reduce count by pre-filled assignments already satisfying this requirement
+    const prefilledForSlot = assignments.filter(
+      a => a.locked && a.date === requirement.date && a.roomId === requirement.roomId && a.timeSlot === requirement.timeSlot
+    ).length;
+    const remainingCount = requirement.count - prefilledForSlot;
+
+    for (let i = 0; i < remainingCount && i < sortedDoctors.length; i++) {
       const doctor = sortedDoctors[i];
       assignments.push({
         id: generateId(),
