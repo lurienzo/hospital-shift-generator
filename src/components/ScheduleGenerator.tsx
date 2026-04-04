@@ -586,7 +586,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                   .map(ts => {
                     return (
                       <div key={`${room.id}-${ts}`} className="pf-grid-cell pf-header-cell" style={{ color: room.color }}>
-                        {room.name.substring(0, 3)}<span className="pf-slot-label">{TIME_SLOT_TIME_LABELS[ts as TimeSlot]}</span>
+                        {room.name}<span className="pf-slot-label">{TIME_SLOT_TIME_LABELS[ts as TimeSlot]}</span>
                       </div>
                     );
                   })
@@ -652,7 +652,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                                     }}
                                     title={`${doc?.name} — clicca per rimuovere`}
                                   >
-                                    {doc?.name?.substring(0, 3) || '?'}
+                                    {doc?.name || '?'}
                                   </span>
                                 );
                               })}
