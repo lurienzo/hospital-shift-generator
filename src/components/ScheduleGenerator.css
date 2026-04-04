@@ -643,6 +643,42 @@
   color: white;
 }
 
+.mini-day.partial {
+  border-style: dashed !important;
+}
+
+.mini-day-label {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mini-day-slots {
+  display: flex;
+  gap: 1px;
+  margin-top: 2px;
+}
+
+.mini-slot-btn {
+  font-size: 0.45rem;
+  padding: 1px 2px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.mini-slot-btn.active {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.mini-slot-btn:hover {
+  opacity: 0.8;
+}
+
 .doctor-date-exclusions {
   animation: fadeIn 0.2s ease;
 }

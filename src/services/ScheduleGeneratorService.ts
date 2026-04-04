@@ -220,7 +220,7 @@ export class ScheduleGeneratorService {
       const doctor = doctorMap.get(assignment.doctorId);
 
       // Excluded date
-      if (this.isDoctorDateBlocked(assignment.doctorId, assignment.date)) {
+      if (this.isDoctorDateBlocked(assignment.doctorId, assignment.date, assignment.timeSlot)) {
         warnings++;
       }
 
@@ -407,14 +407,21 @@ export class ScheduleGeneratorService {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
-  private isDoctorDateBlocked(doctorId: string, date: string): boolean {
+  private isDoctorDateBlocked(doctorId: string, date: string, timeSlot?: TimeSlot): boolean {
     const mode = this.config.doctorAvailabilityMode?.[doctorId] || 'exclusion';
     if (mode === 'availability') {
       const available = this.config.doctorDateAvailability?.[doctorId] || [];
-      return available.length > 0 && !available.includes(date);
+      if (available.length === 0) return false;
+      // Available if full day OR specific slot is in the list
+      const dayAvailable = available.includes(date);
+      const slotAvailable = timeSlot ? available.includes(`${date}:${timeSlot}`) : false;
+      return !dayAvailable && !slotAvailable;
     }
     const excluded = this.config.doctorDateExclusions?.[doctorId] || [];
-    return excluded.includes(date);
+    // Blocked if full day OR specific slot is excluded
+    const dayExcluded = excluded.includes(date);
+    const slotExcluded = timeSlot ? excluded.includes(`${date}:${timeSlot}`) : false;
+    return dayExcluded || slotExcluded;
   }
 
   private createSeededRandom(seed: number): () => number {
@@ -730,7 +737,7 @@ export class ScheduleGeneratorService {
         const weekday = this.getWeekday(date);
         if (doctor.excludedWeekdays.includes(weekday)) return false;
 
-        if (this.isDoctorDateBlocked(doctor.id, req.date)) return false;
+        if (this.isDoctorDateBlocked(doctor.id, req.date, req.timeSlot)) return false;
 
         const restDays = doctorRestDays.get(doctor.id)!;
         if (restDays.has(req.date)) return false;
@@ -933,7 +940,7 @@ export class ScheduleGeneratorService {
         const weekday = this.getWeekday(date);
         if (doctor.excludedWeekdays.includes(weekday)) return false;
 
-        if (this.isDoctorDateBlocked(doctor.id, req.date)) return false;
+        if (this.isDoctorDateBlocked(doctor.id, req.date, req.timeSlot)) return false;
 
         const restDays = doctorRestDays.get(doctor.id)!;
         if (restDays.has(req.date)) return false;
@@ -1002,7 +1009,7 @@ export class ScheduleGeneratorService {
       if (doctor.excludedRooms.includes(requirement.roomId)) return false;
       if (doctor.excludedWeekdays.includes(weekday)) return false;
 
-      if (this.isDoctorDateBlocked(doctor.id, requirement.date)) return false;
+      if (this.isDoctorDateBlocked(doctor.id, requirement.date, requirement.timeSlot)) return false;
 
       const restDays = doctorRestDays.get(doctor.id)!;
       if (restDays.has(requirement.date)) return false;
