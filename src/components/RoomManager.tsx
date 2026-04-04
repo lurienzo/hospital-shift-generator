@@ -434,19 +434,20 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                         }}
                         disabled={(room.dayGroups || []).length > 0}
                       />
-                      <select
-                        value={room.consecutiveStartDay || ''}
-                        onChange={(event) => {
-                          updateConsecutiveStartDay(room.id, event.target.value ? event.target.value as Weekday : undefined);
-                        }}
-                        disabled={!room.consecutiveShifts || (room.dayGroups || []).length > 0}
-                        title="Giorno di inizio rotazione"
-                      >
-                        <option value="">Inizio auto</option>
-                        {WEEKDAYS.map(wd => (
-                          <option key={wd} value={wd}>{WEEKDAY_LABELS[wd]}</option>
-                        ))}
-                      </select>
+                      {room.consecutiveShifts === 7 && (
+                        <select
+                          value={room.consecutiveStartDay || ''}
+                          onChange={(event) => {
+                            updateConsecutiveStartDay(room.id, event.target.value ? event.target.value as Weekday : undefined);
+                          }}
+                          title="Giorno di inizio settimana"
+                        >
+                          <option value="">Inizio auto</option>
+                          {WEEKDAYS.map(wd => (
+                            <option key={wd} value={wd}>{WEEKDAY_LABELS[wd]}</option>
+                          ))}
+                        </select>
+                      )}
                       {room.consecutiveShifts && (
                         <button
                           className="btn-clear"
