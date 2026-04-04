@@ -1102,3 +1102,135 @@
   font-size: 0.625rem;
   margin-right: 2px;
 }
+
+/* ========== Monthly Calendar Grid View ========== */
+
+.monthly-grid-container {
+  margin-top: 16px;
+}
+
+.monthly-grid-header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  margin-bottom: 1px;
+}
+
+.monthly-grid-header-cell {
+  padding: 8px 4px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px 6px 0 0;
+}
+
+.monthly-grid-header-cell.weekend {
+  color: var(--weekend-color, #f39c12);
+}
+
+.monthly-grid-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.monthly-grid-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+
+.monthly-grid-cell {
+  min-height: 120px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.monthly-grid-cell.empty {
+  min-height: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
+.monthly-grid-cell.weekend-or-holiday {
+  background: rgba(243, 156, 18, 0.06);
+  border-color: rgba(243, 156, 18, 0.15);
+}
+
+.monthly-grid-day-number {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.monthly-grid-day-number .holiday-marker {
+  font-size: 0.6875rem;
+}
+
+.monthly-grid-assignments {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.monthly-grid-room-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.monthly-grid-room-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border-left: 2px solid;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.monthly-grid-assignment {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 0.6875rem;
+  line-height: 1.2;
+}
+
+.monthly-grid-assignment.has-warning {
+  outline: 1px solid rgba(231, 76, 60, 0.5);
+}
+
+.monthly-grid-assignment .warning-dot {
+  font-size: 0.5625rem;
+  flex-shrink: 0;
+}
+
+.monthly-grid-assignment .assignment-time {
+  font-weight: 700;
+  font-size: 0.625rem;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.monthly-grid-assignment .assignment-doctor {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
