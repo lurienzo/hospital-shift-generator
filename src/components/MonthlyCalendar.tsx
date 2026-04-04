@@ -133,14 +133,19 @@ export function MonthlyCalendar({
   const doctorDateAvailability = generationConfig?.doctorDateAvailability || {};
   const doctorAvailabilityMode = generationConfig?.doctorAvailabilityMode || {};
 
-  const isDoctorDateBlocked = (date: string, doctorId: string): boolean => {
+  const isDoctorDateBlocked = (date: string, doctorId: string, timeSlot?: TimeSlot): boolean => {
     const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
     if (mode === 'availability') {
       const available = doctorDateAvailability[doctorId] || [];
-      return available.length > 0 && !available.includes(date);
+      if (available.length === 0) return false;
+      const dayAvailable = available.includes(date);
+      const slotAvailable = timeSlot ? available.includes(`${date}:${timeSlot}`) : false;
+      return !dayAvailable && !slotAvailable;
     }
-    const exclusions = doctorDateExclusions[doctorId] || [];
-    return exclusions.includes(date);
+    const excluded = doctorDateExclusions[doctorId] || [];
+    const dayExcluded = excluded.includes(date);
+    const slotExcluded = timeSlot ? excluded.includes(`${date}:${timeSlot}`) : false;
+    return dayExcluded || slotExcluded;
   };
 
   const monthNames = MONTH_NAMES_FULL;
@@ -253,7 +258,7 @@ export function MonthlyCalendar({
   };
 
   const getAssignmentInvalidReason = (assignment: Assignment): string | null => {
-    if (isDoctorDateBlocked(assignment.date, assignment.doctorId)) {
+    if (isDoctorDateBlocked(assignment.date, assignment.doctorId, assignment.timeSlot)) {
       return 'Non disponibile';
     }
 
@@ -406,7 +411,7 @@ export function MonthlyCalendar({
     let warning1: string | null = null;
     let warning2: string | null = null;
 
-    if (isDoctorDateBlocked(assignment2.date, assignment1.doctorId)) {
+    if (isDoctorDateBlocked(assignment2.date, assignment1.doctorId, assignment2.timeSlot)) {
       warning1 = 'Non disponibile';
     } else if (isDoctorOnRestDay(assignment2.date, assignment1.doctorId)) {
       warning1 = 'Smontante';
@@ -414,7 +419,7 @@ export function MonthlyCalendar({
       warning1 = 'Riposo';
     }
 
-    if (isDoctorDateBlocked(assignment1.date, assignment2.doctorId)) {
+    if (isDoctorDateBlocked(assignment1.date, assignment2.doctorId, assignment1.timeSlot)) {
       warning2 = 'Non disponibile';
     } else if (isDoctorOnRestDay(assignment1.date, assignment2.doctorId)) {
       warning2 = 'Smontante';

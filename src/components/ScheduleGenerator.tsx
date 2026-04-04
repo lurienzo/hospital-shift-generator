@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS, TIME_SLOT_TIME_LABELS } from '../models/types';
+import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS, TIME_SLOTS, TIME_SLOT_TIME_LABELS } from '../models/types';
 import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { MONTH_NAMES_FULL, getYearRange } from '../utils/constants';
@@ -152,24 +152,74 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
     saveConfig(newHolidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode);
   };
 
-  const toggleDoctorDateExclusion = (doctorId: string, dateStr: string) => {
-    const currentExclusions = doctorDateExclusions[doctorId] || [];
-    const newExclusions = currentExclusions.includes(dateStr)
-      ? currentExclusions.filter(d => d !== dateStr)
-      : [...currentExclusions, dateStr];
-    const newDoctorDateExclusions = { ...doctorDateExclusions, [doctorId]: newExclusions };
-    setDoctorDateExclusions(newDoctorDateExclusions);
-    saveConfig(holidays, newDoctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode);
+  const toggleDoctorDateEntry = (doctorId: string, entry: string, field: 'exclusion' | 'availability') => {
+    if (field === 'exclusion') {
+      const current = doctorDateExclusions[doctorId] || [];
+      const datePrefix = entry.split(':')[0]; // "2026-04-15" from "2026-04-15:08:00-14:00"
+      let updated: string[];
+
+      if (entry.includes(':')) {
+        // Toggling a specific slot
+        if (current.includes(entry)) {
+          updated = current.filter(d => d !== entry);
+        } else if (current.includes(datePrefix)) {
+          // Full day is selected — replace with remaining individual slots
+          const otherSlots = TIME_SLOTS.filter(ts => `${datePrefix}:${ts}` !== entry).map(ts => `${datePrefix}:${ts}`);
+          updated = [...current.filter(d => d !== datePrefix), ...otherSlots];
+        } else {
+          updated = [...current, entry];
+        }
+      } else {
+        // Toggling a full day
+        const hasAny = current.includes(entry) || current.some(d => d.startsWith(`${entry}:`));
+        updated = hasAny
+          ? current.filter(d => d !== entry && !d.startsWith(`${entry}:`))
+          : [...current, entry];
+      }
+
+      const newExclusions = { ...doctorDateExclusions, [doctorId]: updated };
+      setDoctorDateExclusions(newExclusions);
+      saveConfig(holidays, newExclusions, doctorDateAvailability, doctorAvailabilityMode);
+    } else {
+      const current = doctorDateAvailability[doctorId] || [];
+      const datePrefix = entry.split(':')[0];
+      let updated: string[];
+
+      if (entry.includes(':')) {
+        if (current.includes(entry)) {
+          updated = current.filter(d => d !== entry);
+        } else if (current.includes(datePrefix)) {
+          const otherSlots = TIME_SLOTS.filter(ts => `${datePrefix}:${ts}` !== entry).map(ts => `${datePrefix}:${ts}`);
+          updated = [...current.filter(d => d !== datePrefix), ...otherSlots];
+        } else {
+          updated = [...current, entry];
+        }
+      } else {
+        const hasAny = current.includes(entry) || current.some(d => d.startsWith(`${entry}:`));
+        updated = hasAny
+          ? current.filter(d => d !== entry && !d.startsWith(`${entry}:`))
+          : [...current, entry];
+      }
+
+      const newAvailability = { ...doctorDateAvailability, [doctorId]: updated };
+      setDoctorDateAvailability(newAvailability);
+      saveConfig(holidays, doctorDateExclusions, newAvailability, doctorAvailabilityMode);
+    }
   };
 
-  const toggleDoctorDateAvailability = (doctorId: string, dateStr: string) => {
-    const current = doctorDateAvailability[doctorId] || [];
-    const updated = current.includes(dateStr)
-      ? current.filter(d => d !== dateStr)
-      : [...current, dateStr];
-    const newAvailability = { ...doctorDateAvailability, [doctorId]: updated };
-    setDoctorDateAvailability(newAvailability);
-    saveConfig(holidays, doctorDateExclusions, newAvailability, doctorAvailabilityMode);
+  const isDaySelected = (doctorId: string, dateStr: string): 'full' | 'partial' | 'none' => {
+    const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
+    const list = mode === 'exclusion' ? (doctorDateExclusions[doctorId] || []) : (doctorDateAvailability[doctorId] || []);
+    if (list.includes(dateStr)) return 'full';
+    if (list.some(d => d.startsWith(`${dateStr}:`))) return 'partial';
+    return 'none';
+  };
+
+  const getSelectedSlots = (doctorId: string, dateStr: string): TimeSlot[] => {
+    const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
+    const list = mode === 'exclusion' ? (doctorDateExclusions[doctorId] || []) : (doctorDateAvailability[doctorId] || []);
+    if (list.includes(dateStr)) return [...TIME_SLOTS]; // full day = all slots
+    return TIME_SLOTS.filter(ts => list.includes(`${dateStr}:${ts}`));
   };
 
   const toggleDoctorMode = (doctorId: string, mode: DoctorDateMode) => {
@@ -529,29 +579,45 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                     const isHoliday = !!holidayConfig;
                     const isWeekendOrHoliday = isWeekend || isHoliday;
                     const mode = getSelectedDoctorMode();
-                    const isExcluded = mode === 'exclusion' && doctorDateExclusions[selectedDoctor]?.includes(dateStr);
-                    const isAvailable = mode === 'availability' && doctorDateAvailability[selectedDoctor]?.includes(dateStr);
-                    const isSelected = isExcluded || isAvailable;
+                    const dayState = isDaySelected(selectedDoctor, dateStr);
+                    const selectedSlots = getSelectedSlots(selectedDoctor, dateStr);
+                    const isSelected = dayState !== 'none';
 
                     return (
-                      <button
+                      <div
                         key={day}
-                        className={`mini-day ${isWeekendOrHoliday ? 'weekend-or-holiday' : ''} ${isExcluded ? 'excluded' : ''} ${isAvailable ? 'available' : ''}`}
-                        style={isSelected ? { backgroundColor: doctor?.color } : {}}
-                        onClick={() => {
-                          if (mode === 'exclusion') {
-                            toggleDoctorDateExclusion(selectedDoctor, dateStr);
-                          } else {
-                            toggleDoctorDateAvailability(selectedDoctor, dateStr);
-                          }
-                        }}
-                        title={mode === 'exclusion'
-                          ? (isExcluded ? 'Escluso - clicca per rimuovere' : 'Clicca per escludere')
-                          : (isAvailable ? 'Disponibile - clicca per rimuovere' : 'Clicca per segnare come disponibile')
-                        }
+                        className={`mini-day ${isWeekendOrHoliday ? 'weekend-or-holiday' : ''} ${dayState === 'full' ? (mode === 'exclusion' ? 'excluded' : 'available') : ''} ${dayState === 'partial' ? 'partial' : ''}`}
+                        style={isSelected ? { backgroundColor: doctor?.color + (dayState === 'partial' ? '60' : '') } : {}}
                       >
-                        {day}
-                      </button>
+                        <span
+                          className="mini-day-label"
+                          onClick={() => toggleDoctorDateEntry(selectedDoctor, dateStr, mode)}
+                          title={isSelected ? 'Clicca per rimuovere tutto il giorno' : 'Clicca per selezionare tutto il giorno'}
+                        >
+                          {day}
+                        </span>
+                        {isSelected && (
+                          <div className="mini-day-slots">
+                            {TIME_SLOTS.map(ts => {
+                              const slotActive = selectedSlots.includes(ts);
+                              const label = TIME_SLOT_TIME_LABELS[ts];
+                              return (
+                                <button
+                                  key={ts}
+                                  className={`mini-slot-btn ${slotActive ? 'active' : ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleDoctorDateEntry(selectedDoctor, `${dateStr}:${ts}`, mode);
+                                  }}
+                                  title={`${label}: ${slotActive ? 'attivo' : 'non attivo'}`}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
