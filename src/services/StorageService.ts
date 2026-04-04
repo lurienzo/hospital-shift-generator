@@ -1,4 +1,4 @@
-import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey, DoctorDateMode, Assignment } from '../models/types';
+import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey, DoctorDateMode, Assignment, TIME_SLOT_TIME_LABELS } from '../models/types';
 import { generateId } from '../utils/idGenerator';
 import { parseDateLocal } from '../utils/constants';
 
@@ -342,7 +342,7 @@ export class StorageService {
     const formatAssignment = (roomId: string, timeSlot: string): string => {
       const room = rooms.find(r => r.id === roomId);
       const roomAbbr = room ? room.name.substring(0, 4) : roomId.substring(0, 4);
-      const slotAbbr = timeSlot === '08:00-14:00' ? 'M' : timeSlot === '14:00-20:00' ? 'P' : 'N';
+      const slotAbbr = TIME_SLOT_TIME_LABELS[timeSlot as keyof typeof TIME_SLOT_TIME_LABELS] || timeSlot;
       return `${roomAbbr} ${slotAbbr}`;
     };
 
