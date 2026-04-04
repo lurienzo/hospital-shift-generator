@@ -791,15 +791,6 @@
   font-size: 0.625rem;
 }
 
-.pf-cell-count {
-  position: absolute;
-  top: 1px;
-  right: 2px;
-  font-size: 0.5rem;
-  opacity: 0.4;
-  font-weight: 600;
-  line-height: 1;
-}
 
 .pf-doctor-picker {
   padding: 8px;

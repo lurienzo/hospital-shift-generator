@@ -46,7 +46,6 @@ export interface ScheduleSlot {
   id: string;
   weekday: Weekday;
   timeSlot: TimeSlot;
-  requiredDoctors: number;
   isCritical: boolean;
   requiresNextDayRest: boolean;
   isFullDayExclusive: boolean;

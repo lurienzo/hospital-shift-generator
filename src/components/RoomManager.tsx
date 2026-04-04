@@ -63,24 +63,13 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
         const existingSlot = room.slots.find(
           slot => slot.weekday === weekday && slot.timeSlot === timeSlot
         );
-
-        if (existingSlot) {
-          return {
-            ...room,
-            slots: room.slots.map(slot =>
-              slot.id === existingSlot.id
-                ? { ...slot, requiredDoctors: slot.requiredDoctors + 1 }
-                : slot
-            ),
-          };
-        }
+        if (existingSlot) return room;
 
         const isNightShift = timeSlot === '20:00-08:00';
         const newSlot: ScheduleSlot = {
           id: generateId(),
           weekday,
           timeSlot,
-          requiredDoctors: 1,
           isCritical: isNightShift,
           requiresNextDayRest: isNightShift,
           isFullDayExclusive: isNightShift,
@@ -95,19 +84,6 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
     onRoomsChange(
       rooms.map(room => {
         if (room.id !== roomId) return room;
-
-        const slot = room.slots.find(s => s.id === slotId);
-        if (!slot) return room;
-
-        if (slot.requiredDoctors > 1) {
-          return {
-            ...room,
-            slots: room.slots.map(s =>
-              s.id === slotId ? { ...s, requiredDoctors: s.requiredDoctors - 1 } : s
-            ),
-          };
-        }
-
         return { ...room, slots: room.slots.filter(s => s.id !== slotId) };
       })
     );
@@ -216,22 +192,15 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
 
         for (const weekday of weekdays) {
           for (const timeSlot of timeSlots) {
-            const existingSlotIndex = updatedSlots.findIndex(
+            const exists = updatedSlots.some(
               slot => slot.weekday === weekday && slot.timeSlot === timeSlot
             );
-
-            if (existingSlotIndex >= 0) {
-              updatedSlots[existingSlotIndex] = {
-                ...updatedSlots[existingSlotIndex],
-                requiredDoctors: updatedSlots[existingSlotIndex].requiredDoctors + 1,
-              };
-            } else {
+            if (!exists) {
               const isNightShift = timeSlot === '20:00-08:00';
               updatedSlots.push({
                 id: generateId(),
                 weekday,
                 timeSlot,
-                requiredDoctors: 1,
                 isCritical: isNightShift,
                 requiresNextDayRest: isNightShift,
                 isFullDayExclusive: isNightShift,
@@ -355,11 +324,7 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                             >
                               {slot ? (
                                 <div className="slot-content">
-                                  <span className="doctor-count">{slot.requiredDoctors}</span>
-                                  <div className="slot-actions">
-                                    <button onClick={() => addSlot(room.id, weekday, timeSlot)}>+</button>
-                                    <button onClick={() => removeSlot(room.id, slot.id)}>−</button>
-                                  </div>
+                                  <button className="btn-remove-slot" onClick={() => removeSlot(room.id, slot.id)} title="Rimuovi turno">✕</button>
                                   <div className="slot-flags">
                                     <button
                                       className={`btn-flag ${slot.isCritical ? 'active' : ''}`}
@@ -505,7 +470,7 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
 
             {expandedRoom !== room.id && room.slots.length > 0 && (
               <div className="room-summary">
-                {room.slots.reduce((sum, slot) => sum + slot.requiredDoctors, 0)} turni/settimana
+                {room.slots.length} turni/settimana
                 {room.slots.some(s => s.isCritical) && (
                   <span className="summary-badge">⚠️ {room.slots.filter(s => s.isCritical).length}</span>
                 )}
