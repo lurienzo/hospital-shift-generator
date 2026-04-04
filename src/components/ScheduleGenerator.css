@@ -647,6 +647,113 @@
   animation: fadeIn 0.2s ease;
 }
 
+/* ========== Pre-filled Assignments ========== */
+
+.prefilled-config h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prefilled-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: rgba(52, 152, 219, 0.3);
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.prefilled-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.prefilled-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  font-size: 0.75rem;
+}
+
+.pf-date { font-weight: 600; opacity: 0.8; }
+.pf-slot { font-weight: 700; opacity: 0.6; font-size: 0.6875rem; }
+.pf-remove {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 0.75rem;
+}
+.pf-remove:hover { color: #e74c3c; }
+
+.btn-add-prefilled {
+  padding: 6px 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+.btn-add-prefilled:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: white;
+}
+
+.prefilled-form { animation: fadeIn 0.2s ease; }
+
+.pf-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.pf-row select {
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-size: 0.8125rem;
+  min-width: 100px;
+  flex: 1;
+}
+
+.pf-actions { display: flex; gap: 8px; }
+
+.btn-confirm-pf {
+  padding: 6px 14px;
+  border: 1px solid rgba(46, 204, 113, 0.4);
+  border-radius: 6px;
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+.btn-confirm-pf:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-cancel-pf {
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: translateY(0); }

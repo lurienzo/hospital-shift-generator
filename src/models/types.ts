@@ -83,6 +83,7 @@ export interface Assignment {
   timeSlot: TimeSlot;
   doctorId: string;
   doctorName: string;
+  locked?: boolean;
 }
 
 export interface HolidayConfig {
@@ -99,6 +100,7 @@ export interface GenerationConfig {
   doctorDateExclusions: Record<string, string[]>;
   doctorDateAvailability: Record<string, string[]>;
   doctorAvailabilityMode: Record<string, DoctorDateMode>;
+  prefilledAssignments?: Assignment[];
 }
 
 export interface MonthlySchedule {

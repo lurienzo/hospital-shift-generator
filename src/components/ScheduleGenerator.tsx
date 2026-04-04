@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode } from '../models/types';
+import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS, TIME_SLOTS, TIME_SLOT_SHORT_LABELS } from '../models/types';
 import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { MONTH_NAMES_FULL, getYearRange } from '../utils/constants';
+import { generateId } from '../utils/idGenerator';
 import './ScheduleGenerator.css';
 
 interface ScheduleGeneratorProps {
@@ -23,9 +24,15 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
   const [doctorDateExclusions, setDoctorDateExclusions] = useState<Record<string, string[]>>({});
   const [doctorDateAvailability, setDoctorDateAvailability] = useState<Record<string, string[]>>({});
   const [doctorAvailabilityMode, setDoctorAvailabilityMode] = useState<Record<string, DoctorDateMode>>({});
+  const [prefilledAssignments, setPrefilledAssignments] = useState<Assignment[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null);
   const [editingHoliday, setEditingHoliday] = useState<string | null>(null);
   const [useYearBalance, setUseYearBalance] = useState(true);
+  const [showPrefilledForm, setShowPrefilledForm] = useState(false);
+  const [pfDate, setPfDate] = useState('');
+  const [pfRoom, setPfRoom] = useState('');
+  const [pfTimeSlot, setPfTimeSlot] = useState<TimeSlot | ''>('');
+  const [pfDoctor, setPfDoctor] = useState('');
 
   // Update year/month when preselected values change
   useEffect(() => {
@@ -59,6 +66,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
     newExclusions: Record<string, string[]>,
     newAvailability: Record<string, string[]>,
     newModes: Record<string, DoctorDateMode>,
+    newPrefilled?: Assignment[],
   ) => {
     StorageService.saveGenerationConfig({
       year,
@@ -67,8 +75,9 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       doctorDateExclusions: newExclusions,
       doctorDateAvailability: newAvailability,
       doctorAvailabilityMode: newModes,
+      prefilledAssignments: newPrefilled ?? prefilledAssignments,
     });
-  }, [year, month]);
+  }, [year, month, prefilledAssignments]);
 
   const loadMonthConfig = useCallback((targetYear: number, targetMonth: number) => {
     const savedConfig = StorageService.loadGenerationConfig(targetYear, targetMonth);
@@ -77,11 +86,13 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       setDoctorDateExclusions(savedConfig.doctorDateExclusions);
       setDoctorDateAvailability(savedConfig.doctorDateAvailability || {});
       setDoctorAvailabilityMode(savedConfig.doctorAvailabilityMode || {});
+      setPrefilledAssignments(savedConfig.prefilledAssignments || []);
     } else {
       setHolidays([]);
       setDoctorDateExclusions({});
       setDoctorDateAvailability({});
       setDoctorAvailabilityMode({});
+      setPrefilledAssignments([]);
     }
     setSelectedDoctor(null);
     setEditingHoliday(null);
@@ -197,6 +208,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       doctorDateExclusions,
       doctorDateAvailability,
       doctorAvailabilityMode,
+      prefilledAssignments,
     };
     
     // Pass prior year stats if year balancing is enabled
@@ -547,6 +559,130 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                     );
                   })}
                 </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="config-block prefilled-config">
+          <h3>
+            🔒 Turni Pre-compilati
+            {prefilledAssignments.length > 0 && (
+              <span className="prefilled-count">{prefilledAssignments.length}</span>
+            )}
+          </h3>
+          <p className="config-description">
+            Assegna manualmente turni che non cambieranno durante la generazione. Il bilanciamento ne terra conto.
+          </p>
+
+          {prefilledAssignments.length > 0 && (
+            <div className="prefilled-list">
+              {[...prefilledAssignments]
+                .sort((a, b) => a.date.localeCompare(b.date) || a.roomId.localeCompare(b.roomId))
+                .map(pa => {
+                  const room = rooms.find(r => r.id === pa.roomId);
+                  const doctor = doctors.find(d => d.id === pa.doctorId);
+                  const dayNum = parseInt(pa.date.split('-')[2]);
+                  const slotLabel = pa.timeSlot === '08:00-14:00' ? 'M' : pa.timeSlot === '14:00-20:00' ? 'P' : 'N';
+                  return (
+                    <div key={pa.id} className="prefilled-chip" style={{ borderLeft: `3px solid ${doctor?.color || '#888'}` }}>
+                      <span className="pf-date">{dayNum} {monthNames[month - 1]}</span>
+                      <span className="pf-room" style={{ color: room?.color }}>{room?.name || '?'}</span>
+                      <span className="pf-slot">{slotLabel}</span>
+                      <span className="pf-doctor" style={{ color: doctor?.color }}>{doctor?.name || '?'}</span>
+                      <button
+                        className="pf-remove"
+                        onClick={() => {
+                          const updated = prefilledAssignments.filter(a => a.id !== pa.id);
+                          setPrefilledAssignments(updated);
+                          saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
+                        }}
+                        title="Rimuovi"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {!showPrefilledForm ? (
+            <button className="btn-add-prefilled" onClick={() => {
+              setShowPrefilledForm(true);
+              setPfDate('');
+              setPfRoom(rooms[0]?.id || '');
+              setPfTimeSlot('');
+              setPfDoctor('');
+            }}>
+              + Aggiungi turno
+            </button>
+          ) : (
+            <div className="prefilled-form">
+              <div className="pf-row">
+                <select value={pfDate} onChange={e => setPfDate(e.target.value)}>
+                  <option value="">Giorno...</option>
+                  {calendarDays.map(({ day, dateStr }) => (
+                    <option key={day} value={dateStr}>{day} {monthNames[month - 1]}</option>
+                  ))}
+                </select>
+                <select value={pfRoom} onChange={e => { setPfRoom(e.target.value); setPfTimeSlot(''); }}>
+                  <option value="">Sala...</option>
+                  {rooms.map(room => (
+                    <option key={room.id} value={room.id}>{room.name}</option>
+                  ))}
+                </select>
+                <select value={pfTimeSlot} onChange={e => setPfTimeSlot(e.target.value as TimeSlot)}>
+                  <option value="">Turno...</option>
+                  {(() => {
+                    if (!pfDate || !pfRoom) return [];
+                    const date = new Date(year, month - 1, parseInt(pfDate.split('-')[2]));
+                    const weekday = WEEKDAYS[(date.getDay() + 6) % 7];
+                    const room = rooms.find(r => r.id === pfRoom);
+                    return (room?.slots || [])
+                      .filter(s => s.weekday === weekday)
+                      .map(s => s.timeSlot)
+                      .filter((v, i, a) => a.indexOf(v) === i);
+                  })().map(ts => (
+                    <option key={ts} value={ts}>{TIME_SLOT_SHORT_LABELS[ts]}</option>
+                  ))}
+                </select>
+                <select value={pfDoctor} onChange={e => setPfDoctor(e.target.value)}>
+                  <option value="">Dottore...</option>
+                  {doctors.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="pf-actions">
+                <button
+                  className="btn-confirm-pf"
+                  disabled={!pfDate || !pfRoom || !pfTimeSlot || !pfDoctor}
+                  onClick={() => {
+                    const room = rooms.find(r => r.id === pfRoom);
+                    const doctor = doctors.find(d => d.id === pfDoctor);
+                    if (!room || !doctor || !pfTimeSlot) return;
+                    const newAssignment: Assignment = {
+                      id: generateId(),
+                      date: pfDate,
+                      roomId: pfRoom,
+                      roomName: room.name,
+                      timeSlot: pfTimeSlot as TimeSlot,
+                      doctorId: pfDoctor,
+                      doctorName: doctor.name,
+                      locked: true,
+                    };
+                    const updated = [...prefilledAssignments, newAssignment];
+                    setPrefilledAssignments(updated);
+                    saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
+                    setShowPrefilledForm(false);
+                  }}
+                >
+                  ✓ Aggiungi
+                </button>
+                <button className="btn-cancel-pf" onClick={() => setShowPrefilledForm(false)}>
+                  Annulla
+                </button>
               </div>
             </div>
           )}

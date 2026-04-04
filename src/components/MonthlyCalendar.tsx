@@ -747,21 +747,22 @@ export function MonthlyCalendar({
                             return (
                               <div
                                 key={assignment.id}
-                                className={`assignment-chip ${isEditing ? 'editing' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${dragState.isOver && !dragState.isBlocked && (dragState.warnings.for1 || dragState.warnings.for2) ? 'drag-warning' : ''}`}
-                                style={{ 
+                                className={`assignment-chip ${assignment.locked ? 'locked' : ''} ${isEditing ? 'editing' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${dragState.isOver && !dragState.isBlocked && (dragState.warnings.for1 || dragState.warnings.for2) ? 'drag-warning' : ''}`}
+                                style={{
                                   backgroundColor: getDoctorColor(assignment.doctorId) + '30',
                                   borderColor: getDoctorColor(assignment.doctorId)
                                 }}
-                                draggable={!isEditing}
-                                onDragStart={() => handleDragStart(assignment.id)}
+                                draggable={!isEditing && !assignment.locked}
+                                onDragStart={() => !assignment.locked && handleDragStart(assignment.id)}
                                 onDragEnd={handleDragEnd}
                                 onDragOver={(e) => handleDragOver(e, assignment.id)}
                                 onDragLeave={handleDragLeave}
                                 onDrop={(e) => handleDrop(e, assignment.id)}
-                                onClick={() => setEditingCell({ date: dateStr, roomId: room.id, timeSlot: assignment.timeSlot })}
-                                title={dragTitle}
+                                onClick={() => !assignment.locked && setEditingCell({ date: dateStr, roomId: room.id, timeSlot: assignment.timeSlot })}
+                                title={assignment.locked ? `🔒 ${assignment.doctorName} (pre-compilato)` : dragTitle}
                               >
-                                {invalidReason && <span className="invalid-icon">⚠️</span>}
+                                {assignment.locked && <span className="lock-icon">🔒</span>}
+                                {invalidReason && !assignment.locked && <span className="invalid-icon">⚠️</span>}
                                 {dragState.isOver && dragState.isBlocked && (
                                   <div className="drag-tooltip drag-tooltip-blocked">
                                     ❌ {dragState.blockReason}
@@ -915,20 +916,21 @@ export function MonthlyCalendar({
                             return (
                               <div
                                 key={assignment.id}
-                                className={`assignment-chip-mini ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${invalidReason ? 'has-warning' : ''}`}
+                                className={`assignment-chip-mini ${assignment.locked ? 'locked' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${invalidReason && !assignment.locked ? 'has-warning' : ''}`}
                                 style={{
                                   backgroundColor: (room?.color || '#888') + '30',
                                   borderColor: room?.color || '#888'
                                 }}
-                                draggable
-                                onDragStart={() => handleDragStart(assignment.id)}
+                                draggable={!assignment.locked}
+                                onDragStart={() => !assignment.locked && handleDragStart(assignment.id)}
                                 onDragEnd={handleDragEnd}
                                 onDragOver={(e) => handleDragOver(e, assignment.id)}
                                 onDragLeave={handleDragLeave}
                                 onDrop={(e) => handleDrop(e, assignment.id)}
-                                title={`${room?.name || ''} - ${TIME_SLOT_LABELS[assignment.timeSlot]}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
+                                title={assignment.locked ? `🔒 ${room?.name || ''} (pre-compilato)` : `${room?.name || ''} - ${TIME_SLOT_LABELS[assignment.timeSlot]}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
                               >
-                                {invalidReason && <span className="invalid-icon-mini">⚠️</span>}
+                                {assignment.locked && <span className="lock-icon-mini">🔒</span>}
+                                {invalidReason && !assignment.locked && <span className="invalid-icon-mini">⚠️</span>}
                                 {dragState.isOver && dragState.isBlocked && (
                                   <div className="drag-tooltip drag-tooltip-blocked">
                                     ❌ {dragState.blockReason}
@@ -1012,11 +1014,12 @@ export function MonthlyCalendar({
                                 return (
                                   <div
                                     key={assignment.id}
-                                    className={`monthly-grid-assignment ${invalidReason ? 'has-warning' : ''}`}
+                                    className={`monthly-grid-assignment ${assignment.locked ? 'locked' : ''} ${invalidReason && !assignment.locked ? 'has-warning' : ''}`}
                                     style={{ backgroundColor: getDoctorColor(assignment.doctorId) + '25', borderLeft: `3px solid ${getDoctorColor(assignment.doctorId)}` }}
-                                    title={`${assignment.doctorName} - ${room.name} ${assignment.timeSlot}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
+                                    title={assignment.locked ? `🔒 ${assignment.doctorName} (pre-compilato)` : `${assignment.doctorName} - ${room.name} ${assignment.timeSlot}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
                                   >
-                                    {invalidReason && <span className="warning-dot">⚠️</span>}
+                                    {assignment.locked && <span className="warning-dot">🔒</span>}
+                                    {invalidReason && !assignment.locked && <span className="warning-dot">⚠️</span>}
                                     <span className="assignment-time">{timeLabel}</span>
                                     <span className="assignment-doctor">{assignment.doctorName}</span>
                                   </div>
