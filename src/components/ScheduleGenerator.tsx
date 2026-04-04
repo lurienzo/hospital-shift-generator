@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig } from '../models/types';
 import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
+import { MONTH_NAMES_FULL, getYearRange } from '../utils/constants';
 import './ScheduleGenerator.css';
 
 interface ScheduleGeneratorProps {
@@ -34,10 +35,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
     }
   }, [preselectedYear, preselectedMonth]);
 
-  const monthNames = [
-    'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
-    'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre',
-  ];
+  const monthNames = MONTH_NAMES_FULL;
 
   const weekdayNames = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
 
@@ -168,8 +166,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       onScheduleGenerated(result.schedule);
     } catch (error) {
       console.error('Generation error:', error);
-      const fallback = generator.generate();
-      onScheduleGenerated(fallback);
+      alert(`Errore durante la generazione: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsGenerating(false);
       setGenerationProgress(null);
@@ -207,7 +204,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
           <div className="select-group">
             <label>Anno</label>
             <select value={year} onChange={event => handleYearChange(Number(event.target.value))}>
-              {[2025, 2026, 2027, 2028].map(yearOption => (
+              {getYearRange().map(yearOption => (
                 <option key={yearOption} value={yearOption}>
                   {yearOption}
                 </option>

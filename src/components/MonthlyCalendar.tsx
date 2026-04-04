@@ -3,6 +3,7 @@ import { MonthlySchedule, OperativeRoom, Doctor, Assignment, TimeSlot, TIME_SLOT
 import { ScheduleGeneratorService } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { generateId } from '../utils/idGenerator';
+import { MONTH_NAMES_FULL, MONTH_NAMES_SHORT } from '../utils/constants';
 import { ScheduleVersionManager } from './ScheduleVersionManager';
 import './MonthlyCalendar.css';
 
@@ -28,7 +29,7 @@ interface EditingCell {
 }
 
 type CalendarView = 'rooms' | 'doctors';
-type SortColumn = 'name' | 'shifts' | 'days' | 'hours' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | string;
+type SortColumn = 'name' | 'shifts' | 'days' | 'hours' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | `room-${string}`;
 type SortDirection = 'asc' | 'desc';
 
 export function MonthlyCalendar({ 
@@ -134,10 +135,7 @@ export function MonthlyCalendar({
     return exclusions.includes(date);
   };
 
-  const monthNames = [
-    'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
-    'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre',
-  ];
+  const monthNames = MONTH_NAMES_FULL;
 
   const weekdayNames = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
 
@@ -250,7 +248,7 @@ export function MonthlyCalendar({
   const invalidAssignments = useMemo(() => {
     if (!schedule) return [];
     return schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
-  }, [schedule?.assignments, rooms, doctorDateExclusions]);
+  }, [schedule, rooms, doctorDateExclusions]);
 
   const getNextDayStr = (date: string): string => {
     const currentDate = new Date(date);
@@ -527,10 +525,14 @@ export function MonthlyCalendar({
     return { totals, averages, stdDevs };
   }, [stats, rooms]);
 
-  const monthNamesShort = [
-    'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu',
-    'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic',
-  ];
+  const monthNamesShort = MONTH_NAMES_SHORT;
+
+  // Memoize version counts to avoid 12 localStorage reads per render
+  const monthVersionCounts = useMemo(() => {
+    return Array.from({ length: 12 }, (_, i) =>
+      StorageService.loadScheduleVersionsForMonth(selectedYear, i + 1).length
+    );
+  }, [selectedYear, schedule]);
 
   return (
     <div className="monthly-calendar">
@@ -556,7 +558,7 @@ export function MonthlyCalendar({
         </div>
         <div className="month-nav-grid">
           {Array.from({ length: 12 }, (_, i) => i + 1).map(month => {
-            const versionCount = StorageService.loadScheduleVersionsForMonth(selectedYear, month).length;
+            const versionCount = monthVersionCounts[month - 1];
             const hasVersions = versionCount > 0;
             const isSelected = selectedMonth === month;
             
@@ -899,9 +901,9 @@ export function MonthlyCalendar({
                               <div
                                 key={assignment.id}
                                 className={`assignment-chip-mini ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${invalidReason ? 'has-warning' : ''}`}
-                                style={{ 
-                                  backgroundColor: room?.color + '30',
-                                  borderColor: room?.color
+                                style={{
+                                  backgroundColor: (room?.color || '#888') + '30',
+                                  borderColor: room?.color || '#888'
                                 }}
                                 draggable
                                 onDragStart={() => handleDragStart(assignment.id)}
