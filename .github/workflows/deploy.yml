@@ -53,6 +53,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to deploy"
           else
-            git commit -m "Deploy ${{ env.APP_NAME }} from ${GITHUB_SHA::7}"
+            git commit -m "Deploy HSG from ${GITHUB_SHA::7}"
             git push
           fi
