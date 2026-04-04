@@ -131,6 +131,20 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
     );
   };
 
+  const toggleSecondDayRest = (roomId: string, slotId: string) => {
+    onRoomsChange(
+      rooms.map(room => {
+        if (room.id !== roomId) return room;
+        return {
+          ...room,
+          slots: room.slots.map(slot =>
+            slot.id === slotId ? { ...slot, requiresSecondDayRest: !slot.requiresSecondDayRest } : slot
+          ),
+        };
+      })
+    );
+  };
+
   const addDayGroup = (roomId: string) => {
     onRoomsChange(
       rooms.map(room => {
@@ -333,8 +347,13 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                                     <button
                                       className={`btn-flag-sm ${slot.requiresNextDayRest ? 'active' : ''}`}
                                       onClick={(e) => { e.stopPropagation(); toggleNextDayRest(room.id, slot.id); }}
-                                      title={slot.requiresNextDayRest ? 'Smontante' : 'Segna smontante'}
+                                      title={slot.requiresNextDayRest ? 'Smontante (1g riposo)' : 'Segna smontante'}
                                     >😴</button>
+                                    <button
+                                      className={`btn-flag-sm ${slot.requiresSecondDayRest ? 'active' : ''}`}
+                                      onClick={(e) => { e.stopPropagation(); toggleSecondDayRest(room.id, slot.id); }}
+                                      title={slot.requiresSecondDayRest ? 'Smontante + Riposo (2g)' : 'Segna smontante + riposo (2g)'}
+                                    >💤</button>
                                     <button
                                       className={`btn-flag-sm ${slot.isFullDayExclusive ? 'active' : ''}`}
                                       onClick={(e) => { e.stopPropagation(); toggleFullDayExclusive(room.id, slot.id); }}
@@ -366,7 +385,11 @@ export function RoomManager({ rooms, onRoomsChange }: RoomManagerProps) {
                   </span>
                   <span className="legend-item">
                     <span className="legend-icon">😴</span>
-                    Smontante
+                    Smontante (1g)
+                  </span>
+                  <span className="legend-item">
+                    <span className="legend-icon">💤</span>
+                    Smontante + Riposo (2g)
                   </span>
                   <span className="legend-item">
                     <span className="legend-icon">🚫</span>

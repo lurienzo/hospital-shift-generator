@@ -48,6 +48,7 @@ export interface ScheduleSlot {
   timeSlot: TimeSlot;
   isCritical: boolean;
   requiresNextDayRest: boolean;
+  requiresSecondDayRest?: boolean;
   isFullDayExclusive: boolean;
 }
 

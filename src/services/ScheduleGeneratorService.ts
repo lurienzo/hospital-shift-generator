@@ -25,6 +25,7 @@ interface SlotRequirement {
   isWeekendOrHoliday: boolean;
   isCritical: boolean;
   requiresNextDayRest: boolean;
+  requiresSecondDayRest: boolean;
   isFullDayExclusive: boolean;
 }
 
@@ -206,6 +207,8 @@ export class ScheduleGeneratorService {
         const slot = room?.slots.find(s => s.timeSlot === assignment.timeSlot);
         if (slot?.requiresNextDayRest) {
           restDays.get(assignment.doctorId)?.add(this.getDateOffset(assignment.date, 1));
+        }
+        if (slot?.requiresSecondDayRest) {
           secondRestDays.get(assignment.doctorId)?.add(this.getDateOffset(assignment.date, 2));
         }
         if (slot?.isFullDayExclusive) {
@@ -257,6 +260,8 @@ export class ScheduleGeneratorService {
 
       if (slot?.requiresNextDayRest) {
         restDays.get(assignment.doctorId)!.add(this.getDateOffset(assignment.date, 1));
+      }
+      if (slot?.requiresSecondDayRest) {
         secondRestDays.get(assignment.doctorId)!.add(this.getDateOffset(assignment.date, 2));
       }
 
@@ -373,6 +378,7 @@ export class ScheduleGeneratorService {
               isWeekendOrHoliday,
               isCritical: slot.isCritical,
               requiresNextDayRest: slot.requiresNextDayRest,
+              requiresSecondDayRest: slot.requiresSecondDayRest || false,
               isFullDayExclusive: slot.isFullDayExclusive,
             });
           }
