@@ -223,7 +223,7 @@ export function MonthlyCalendar({
       const room = rooms.find(r => r.id === assignment.roomId);
       if (room) {
         const slot = room.slots.find(s => s.timeSlot === assignment.timeSlot);
-        if (slot?.requiresNextDayRest) {
+        if (slot?.requiresSecondDayRest) {
           return true;
         }
       }

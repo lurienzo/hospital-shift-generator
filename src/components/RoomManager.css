@@ -277,18 +277,18 @@
 }
 
 .btn-flag-sm {
-  font-size: 0.5rem;
+  font-size: 0.65rem;
   background: transparent;
   border: none;
   cursor: pointer;
-  opacity: 0.25;
+  opacity: 0.35;
   transition: opacity 0.15s;
   padding: 1px;
   line-height: 1;
 }
 
 .btn-flag-sm:hover {
-  opacity: 0.7;
+  opacity: 0.8;
 }
 
 .btn-flag-sm.active {
