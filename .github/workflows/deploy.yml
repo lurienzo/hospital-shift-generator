@@ -1,0 +1,59 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hospital-shift-generator
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      APP_NAME: hospital-shift-generator
+
+    steps:
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Checkout triuzzi.github.io
+        uses: actions/checkout@v4
+        with:
+          repository: triuzzi/triuzzi.github.io
+          token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+          path: target-repo
+
+      - name: Deploy to subfolder
+        run: |
+          rm -rf target-repo/public/${{ env.APP_NAME }}
+          cp -r dist target-repo/public/${{ env.APP_NAME }}
+          cp dist/index.html target-repo/public/${{ env.APP_NAME }}/404.html
+
+      - name: Commit and push
+        working-directory: target-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/${{ env.APP_NAME }}/
+          if git diff --staged --quiet; then
+            echo "No changes to deploy"
+          else
+            git commit -m "Deploy ${{ env.APP_NAME }} from ${GITHUB_SHA::7}"
+            git push
+          fi
