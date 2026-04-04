@@ -257,17 +257,17 @@ export function MonthlyCalendar({
     return slot?.isFullDayExclusive || false;
   };
 
-  const getAssignmentInvalidReason = (assignment: Assignment): string | null => {
+  const getAssignmentInvalidReason = (assignment: Assignment): { reason: string; severity: 'error' | 'notice' } | null => {
     if (isDoctorDateBlocked(assignment.date, assignment.doctorId, assignment.timeSlot)) {
-      return 'Non disponibile';
+      return { reason: 'Non disponibile', severity: 'error' };
     }
 
     if (isDoctorOnRestDay(assignment.date, assignment.doctorId)) {
-      return 'Smontante';
+      return { reason: 'Smontante', severity: 'error' };
     }
 
     if (isDoctorOnSecondRestDay(assignment.date, assignment.doctorId)) {
-      return 'Riposo';
+      return { reason: 'Riposo', severity: 'notice' };
     }
 
     const isThisExclusive = isFullDayExclusiveShift(assignment.roomId, assignment.timeSlot);
@@ -276,11 +276,11 @@ export function MonthlyCalendar({
     );
 
     if (isThisExclusive && otherSameDayAssignments.length > 0) {
-      return 'Montante';
+      return { reason: 'Montante', severity: 'error' };
     }
 
     if (otherSameDayAssignments.some(a => isFullDayExclusiveShift(a.roomId, a.timeSlot))) {
-      return 'Montante';
+      return { reason: 'Montante', severity: 'error' };
     }
 
     return null;
@@ -763,14 +763,14 @@ export function MonthlyCalendar({
                             const isEditing = editingCell?.date === dateStr && 
                               editingCell?.roomId === room.id && 
                               editingCell?.timeSlot === assignment.timeSlot;
-                            const invalidReason = getAssignmentInvalidReason(assignment);
+                            const issueResult = getAssignmentInvalidReason(assignment);
                             const isDragging = draggingAssignment === assignment.id;
                             const dragState = getDragOverState(assignment.id);
-                            
-                            let dragTitle = invalidReason 
-                              ? `⚠️ ${assignment.doctorName} - ${invalidReason}` 
+
+                            let dragTitle = issueResult
+                              ? `${issueResult.severity === 'error' ? '⚠️' : 'ℹ️'} ${assignment.doctorName} - ${issueResult.reason}`
                               : `${assignment.doctorName} - ${TIME_SLOT_LABELS[assignment.timeSlot]} (trascina per scambiare)`;
-                            
+
                             if (dragState.isOver && dragState.isBlocked) {
                               dragTitle = `❌ ${dragState.blockReason}`;
                             } else if (dragState.isOver && (dragState.warnings.for1 || dragState.warnings.for2)) {
@@ -779,11 +779,11 @@ export function MonthlyCalendar({
                               if (dragState.warnings.for2) warningParts.push(`⚠️ ${dragState.warnings.for2}`);
                               dragTitle = `Scambio con warning: ${warningParts.join(', ')}`;
                             }
-                            
+
                             return (
                               <div
                                 key={assignment.id}
-                                className={`assignment-chip ${assignment.locked ? 'locked' : ''} ${isEditing ? 'editing' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${dragState.isOver && !dragState.isBlocked && (dragState.warnings.for1 || dragState.warnings.for2) ? 'drag-warning' : ''}`}
+                                className={`assignment-chip ${assignment.locked ? 'locked' : ''} ${isEditing ? 'editing' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${dragState.isOver && !dragState.isBlocked && (dragState.warnings.for1 || dragState.warnings.for2) ? 'drag-warning' : ''} ${issueResult && !assignment.locked ? (issueResult.severity === 'error' ? 'has-warning' : 'has-notice') : ''}`}
                                 style={{
                                   backgroundColor: getDoctorColor(assignment.doctorId) + '30',
                                   borderColor: getDoctorColor(assignment.doctorId)
@@ -798,7 +798,7 @@ export function MonthlyCalendar({
                                 title={assignment.locked ? `🔒 ${assignment.doctorName} (pre-compilato)` : dragTitle}
                               >
                                 {assignment.locked && <span className="lock-icon">🔒</span>}
-                                {invalidReason && !assignment.locked && <span className="invalid-icon">⚠️</span>}
+                                {issueResult && !assignment.locked && <span className="invalid-icon">{issueResult.severity === 'error' ? '⚠️' : 'ℹ️'}</span>}
                                 {dragState.isOver && dragState.isBlocked && (
                                   <div className="drag-tooltip drag-tooltip-blocked">
                                     ❌ {dragState.blockReason}
@@ -945,14 +945,14 @@ export function MonthlyCalendar({
                         <div className="assignments doctor-assignments">
                           {doctorAssignments.map((assignment) => {
                             const room = rooms.find(r => r.id === assignment.roomId);
-                            const invalidReason = getAssignmentInvalidReason(assignment);
+                            const issueResult = getAssignmentInvalidReason(assignment);
                             const isDragging = draggingAssignment === assignment.id;
                             const dragState = getDragOverState(assignment.id);
-                            
+
                             return (
                               <div
                                 key={assignment.id}
-                                className={`assignment-chip-mini ${assignment.locked ? 'locked' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${invalidReason && !assignment.locked ? 'has-warning' : ''}`}
+                                className={`assignment-chip-mini ${assignment.locked ? 'locked' : ''} ${isDragging ? 'dragging' : ''} ${dragState.isOver && !dragState.isBlocked ? 'drag-over' : ''} ${dragState.isOver && dragState.isBlocked ? 'drag-blocked' : ''} ${issueResult && !assignment.locked ? (issueResult.severity === 'error' ? 'has-warning' : 'has-notice') : ''}`}
                                 style={{
                                   backgroundColor: (room?.color || '#888') + '30',
                                   borderColor: room?.color || '#888'
@@ -963,10 +963,10 @@ export function MonthlyCalendar({
                                 onDragOver={(e) => handleDragOver(e, assignment.id)}
                                 onDragLeave={handleDragLeave}
                                 onDrop={(e) => handleDrop(e, assignment.id)}
-                                title={assignment.locked ? `🔒 ${room?.name || ''} (pre-compilato)` : `${room?.name || ''} - ${TIME_SLOT_LABELS[assignment.timeSlot]}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
+                                title={assignment.locked ? `🔒 ${room?.name || ''} (pre-compilato)` : `${room?.name || ''} - ${TIME_SLOT_LABELS[assignment.timeSlot]}${issueResult ? ` ${issueResult.severity === 'error' ? '⚠️' : 'ℹ️'} ${issueResult.reason}` : ''}`}
                               >
                                 {assignment.locked && <span className="lock-icon-mini">🔒</span>}
-                                {invalidReason && !assignment.locked && <span className="invalid-icon-mini">⚠️</span>}
+                                {issueResult && !assignment.locked && <span className="invalid-icon-mini">{issueResult.severity === 'error' ? '⚠️' : 'ℹ️'}</span>}
                                 {dragState.isOver && dragState.isBlocked && (
                                   <div className="drag-tooltip drag-tooltip-blocked">
                                     ❌ {dragState.blockReason}
@@ -1045,17 +1045,17 @@ export function MonthlyCalendar({
                                 {room.name}
                               </div>
                               {roomAssignments.map(assignment => {
-                                const invalidReason = getAssignmentInvalidReason(assignment);
+                                const issueResult = getAssignmentInvalidReason(assignment);
                                 const timeLabel = TIME_SLOT_TIME_LABELS[assignment.timeSlot];
                                 return (
                                   <div
                                     key={assignment.id}
-                                    className={`monthly-grid-assignment ${assignment.locked ? 'locked' : ''} ${invalidReason && !assignment.locked ? 'has-warning' : ''}`}
+                                    className={`monthly-grid-assignment ${assignment.locked ? 'locked' : ''} ${issueResult && !assignment.locked ? (issueResult.severity === 'error' ? 'has-warning' : 'has-notice') : ''}`}
                                     style={{ backgroundColor: getDoctorColor(assignment.doctorId) + '25', borderLeft: `3px solid ${getDoctorColor(assignment.doctorId)}` }}
-                                    title={assignment.locked ? `🔒 ${assignment.doctorName} (pre-compilato)` : `${assignment.doctorName} - ${room.name} ${assignment.timeSlot}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
+                                    title={assignment.locked ? `🔒 ${assignment.doctorName} (pre-compilato)` : `${assignment.doctorName} - ${room.name} ${assignment.timeSlot}${issueResult ? ` ${issueResult.severity === 'error' ? '⚠️' : 'ℹ️'} ${issueResult.reason}` : ''}`}
                                   >
                                     {assignment.locked && <span className="warning-dot">🔒</span>}
-                                    {invalidReason && !assignment.locked && <span className="warning-dot">⚠️</span>}
+                                    {issueResult && !assignment.locked && <span className="warning-dot">{issueResult.severity === 'error' ? '⚠️' : 'ℹ️'}</span>}
                                     <span className="assignment-time">{timeLabel}</span>
                                     <span className="assignment-doctor">{assignment.doctorName}</span>
                                   </div>
