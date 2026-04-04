@@ -591,6 +591,58 @@
   font-size: 0.6875rem;
 }
 
+.availability-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: rgba(46, 204, 113, 0.4);
+  border-radius: 9px;
+  font-size: 0.6875rem;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: all 0.2s ease;
+
+  &.active {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.mode-hint {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0 0 8px 0;
+  font-style: italic;
+}
+
+.mini-day.available {
+  background: rgba(46, 204, 113, 0.3) !important;
+  border-color: rgba(46, 204, 113, 0.6) !important;
+  color: white;
+}
+
 .doctor-date-exclusions {
   animation: fadeIn 0.2s ease;
 }

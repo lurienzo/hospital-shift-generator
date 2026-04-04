@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig } from '../models/types';
+import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode } from '../models/types';
 import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { MONTH_NAMES_FULL, getYearRange } from '../utils/constants';
@@ -21,6 +21,8 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
   const [holidays, setHolidays] = useState<HolidayConfig[]>([]);
   const [doctorDateExclusions, setDoctorDateExclusions] = useState<Record<string, string[]>>({});
+  const [doctorDateAvailability, setDoctorDateAvailability] = useState<Record<string, string[]>>({});
+  const [doctorAvailabilityMode, setDoctorAvailabilityMode] = useState<Record<string, DoctorDateMode>>({});
   const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null);
   const [editingHoliday, setEditingHoliday] = useState<string | null>(null);
   const [useYearBalance, setUseYearBalance] = useState(true);
@@ -52,12 +54,19 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
     return days;
   }, [year, month, daysInMonth]);
 
-  const saveConfig = useCallback((newHolidays: HolidayConfig[], newExclusions: Record<string, string[]>) => {
+  const saveConfig = useCallback((
+    newHolidays: HolidayConfig[],
+    newExclusions: Record<string, string[]>,
+    newAvailability: Record<string, string[]>,
+    newModes: Record<string, DoctorDateMode>,
+  ) => {
     StorageService.saveGenerationConfig({
       year,
       month,
       holidays: newHolidays,
       doctorDateExclusions: newExclusions,
+      doctorDateAvailability: newAvailability,
+      doctorAvailabilityMode: newModes,
     });
   }, [year, month]);
 
@@ -66,9 +75,13 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
     if (savedConfig) {
       setHolidays(savedConfig.holidays);
       setDoctorDateExclusions(savedConfig.doctorDateExclusions);
+      setDoctorDateAvailability(savedConfig.doctorDateAvailability || {});
+      setDoctorAvailabilityMode(savedConfig.doctorAvailabilityMode || {});
     } else {
       setHolidays([]);
       setDoctorDateExclusions({});
+      setDoctorDateAvailability({});
+      setDoctorAvailabilityMode({});
     }
     setSelectedDoctor(null);
     setEditingHoliday(null);
@@ -116,7 +129,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       newHolidays = [...holidays, { date: dateStr, disabledRooms: [] }];
     }
     setHolidays(newHolidays);
-    saveConfig(newHolidays, doctorDateExclusions);
+    saveConfig(newHolidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode);
   };
 
   const toggleHolidayRoom = (dateStr: string, roomId: string) => {
@@ -129,7 +142,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       return { ...h, disabledRooms };
     });
     setHolidays(newHolidays);
-    saveConfig(newHolidays, doctorDateExclusions);
+    saveConfig(newHolidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode);
   };
 
   const toggleDoctorDateExclusion = (doctorId: string, dateStr: string) => {
@@ -139,7 +152,36 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       : [...currentExclusions, dateStr];
     const newDoctorDateExclusions = { ...doctorDateExclusions, [doctorId]: newExclusions };
     setDoctorDateExclusions(newDoctorDateExclusions);
-    saveConfig(holidays, newDoctorDateExclusions);
+    saveConfig(holidays, newDoctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode);
+  };
+
+  const toggleDoctorDateAvailability = (doctorId: string, dateStr: string) => {
+    const current = doctorDateAvailability[doctorId] || [];
+    const updated = current.includes(dateStr)
+      ? current.filter(d => d !== dateStr)
+      : [...current, dateStr];
+    const newAvailability = { ...doctorDateAvailability, [doctorId]: updated };
+    setDoctorDateAvailability(newAvailability);
+    saveConfig(holidays, doctorDateExclusions, newAvailability, doctorAvailabilityMode);
+  };
+
+  const toggleDoctorMode = (doctorId: string, mode: DoctorDateMode) => {
+    const newModes = { ...doctorAvailabilityMode, [doctorId]: mode };
+    setDoctorAvailabilityMode(newModes);
+    saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, newModes);
+  };
+
+  const getSelectedDoctorMode = (): DoctorDateMode => {
+    if (!selectedDoctor) return 'exclusion';
+    return doctorAvailabilityMode[selectedDoctor] || 'exclusion';
+  };
+
+  const getDoctorDateCount = (doctorId: string): number => {
+    const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
+    if (mode === 'availability') {
+      return doctorDateAvailability[doctorId]?.length || 0;
+    }
+    return doctorDateExclusions[doctorId]?.length || 0;
   };
 
   const handleGenerate = async () => {
@@ -153,6 +195,8 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
       month,
       holidays,
       doctorDateExclusions,
+      doctorDateAvailability,
+      doctorAvailabilityMode,
     };
     
     // Pass prior year stats if year balancing is enabled
@@ -411,31 +455,56 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
         </div>
 
         <div className="config-block doctor-exclusions-config">
-          <h3>🚫 Esclusioni Date per Dottore</h3>
-          <p className="config-description">Seleziona un dottore e clicca sui giorni da escludere per questo mese</p>
-          
+          <h3>📋 Disponibilita / Esclusioni per Dottore</h3>
+          <p className="config-description">Seleziona un dottore, scegli la modalita, e clicca sui giorni</p>
+
           <div className="doctor-selector">
-            {doctors.map(doctor => (
-              <button
-                key={doctor.id}
-                className={`doctor-btn ${selectedDoctor === doctor.id ? 'active' : ''}`}
-                style={{ 
-                  backgroundColor: selectedDoctor === doctor.id ? doctor.color : 'transparent',
-                  borderColor: doctor.color,
-                  color: selectedDoctor === doctor.id ? 'white' : doctor.color
-                }}
-                onClick={() => setSelectedDoctor(selectedDoctor === doctor.id ? null : doctor.id)}
-              >
-                {doctor.name}
-                {(doctorDateExclusions[doctor.id]?.length || 0) > 0 && (
-                  <span className="exclusion-count">{doctorDateExclusions[doctor.id].length}</span>
-                )}
-              </button>
-            ))}
+            {doctors.map(doctor => {
+              const mode = doctorAvailabilityMode[doctor.id] || 'exclusion';
+              const count = getDoctorDateCount(doctor.id);
+              return (
+                <button
+                  key={doctor.id}
+                  className={`doctor-btn ${selectedDoctor === doctor.id ? 'active' : ''}`}
+                  style={{
+                    backgroundColor: selectedDoctor === doctor.id ? doctor.color : 'transparent',
+                    borderColor: doctor.color,
+                    color: selectedDoctor === doctor.id ? 'white' : doctor.color
+                  }}
+                  onClick={() => setSelectedDoctor(selectedDoctor === doctor.id ? null : doctor.id)}
+                >
+                  {doctor.name}
+                  {count > 0 && (
+                    <span className={mode === 'availability' ? 'availability-count' : 'exclusion-count'}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {selectedDoctor && (
             <div className="doctor-date-exclusions">
+              <div className="mode-toggle">
+                <button
+                  className={`mode-btn ${getSelectedDoctorMode() === 'exclusion' ? 'active' : ''}`}
+                  onClick={() => toggleDoctorMode(selectedDoctor, 'exclusion')}
+                >
+                  🚫 Esclusioni
+                </button>
+                <button
+                  className={`mode-btn ${getSelectedDoctorMode() === 'availability' ? 'active' : ''}`}
+                  onClick={() => toggleDoctorMode(selectedDoctor, 'availability')}
+                >
+                  ✅ Disponibilita
+                </button>
+              </div>
+
+              {getSelectedDoctorMode() === 'availability' && (doctorDateAvailability[selectedDoctor]?.length || 0) === 0 && (
+                <p className="mode-hint">Clicca sui giorni in cui il dottore e disponibile. Se nessun giorno e selezionato, nessun vincolo viene applicato.</p>
+              )}
+
               <div className="mini-calendar">
                 <div className="mini-calendar-header">
                   {weekdayNames.map(name => (
@@ -447,18 +516,31 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                     <span key={`empty-${index}`} className="mini-day empty"></span>
                   ))}
                   {calendarDays.map(({ day, dateStr, isWeekend }) => {
-                    const isExcluded = doctorDateExclusions[selectedDoctor]?.includes(dateStr);
                     const doctor = doctors.find(d => d.id === selectedDoctor);
                     const holidayConfig = getHolidayConfig(dateStr);
                     const isHoliday = !!holidayConfig;
                     const isWeekendOrHoliday = isWeekend || isHoliday;
+                    const mode = getSelectedDoctorMode();
+                    const isExcluded = mode === 'exclusion' && doctorDateExclusions[selectedDoctor]?.includes(dateStr);
+                    const isAvailable = mode === 'availability' && doctorDateAvailability[selectedDoctor]?.includes(dateStr);
+                    const isSelected = isExcluded || isAvailable;
+
                     return (
                       <button
                         key={day}
-                        className={`mini-day ${isWeekendOrHoliday ? 'weekend-or-holiday' : ''} ${isExcluded ? 'excluded' : ''}`}
-                        style={isExcluded ? { backgroundColor: doctor?.color } : {}}
-                        onClick={() => toggleDoctorDateExclusion(selectedDoctor, dateStr)}
-                        title={isExcluded ? 'Escluso - clicca per rimuovere' : 'Clicca per escludere'}
+                        className={`mini-day ${isWeekendOrHoliday ? 'weekend-or-holiday' : ''} ${isExcluded ? 'excluded' : ''} ${isAvailable ? 'available' : ''}`}
+                        style={isSelected ? { backgroundColor: doctor?.color } : {}}
+                        onClick={() => {
+                          if (mode === 'exclusion') {
+                            toggleDoctorDateExclusion(selectedDoctor, dateStr);
+                          } else {
+                            toggleDoctorDateAvailability(selectedDoctor, dateStr);
+                          }
+                        }}
+                        title={mode === 'exclusion'
+                          ? (isExcluded ? 'Escluso - clicca per rimuovere' : 'Clicca per escludere')
+                          : (isAvailable ? 'Disponibile - clicca per rimuovere' : 'Clicca per segnare come disponibile')
+                        }
                       >
                         {day}
                       </button>

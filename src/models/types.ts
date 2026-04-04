@@ -90,11 +90,15 @@ export interface HolidayConfig {
   disabledRooms: string[];
 }
 
+export type DoctorDateMode = 'exclusion' | 'availability';
+
 export interface GenerationConfig {
   year: number;
   month: number;
   holidays: HolidayConfig[];
   doctorDateExclusions: Record<string, string[]>;
+  doctorDateAvailability: Record<string, string[]>;
+  doctorAvailabilityMode: Record<string, DoctorDateMode>;
 }
 
 export interface MonthlySchedule {
