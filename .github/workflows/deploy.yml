@@ -43,7 +43,6 @@ jobs:
         run: |
           rm -rf target-repo/public/${{ env.APP_NAME }}
           cp -r dist target-repo/public/${{ env.APP_NAME }}
-          cp dist/index.html target-repo/public/${{ env.APP_NAME }}/404.html
 
       - name: Commit and push
         working-directory: target-repo
