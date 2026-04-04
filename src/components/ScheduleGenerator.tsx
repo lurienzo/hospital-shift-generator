@@ -572,100 +572,115 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
           </p>
 
           <div className="pf-grid-container">
-            <table className="pf-grid">
-              <thead>
-                <tr>
-                  <th className="pf-day-col">G.</th>
-                  {rooms.flatMap(room =>
-                    room.slots
-                      .map(s => s.timeSlot)
-                      .filter((v, i, a) => a.indexOf(v) === i)
-                      .sort((a, b) => {
-                        const order: Record<string, number> = { '08:00-14:00': 0, '14:00-20:00': 1, '20:00-08:00': 2 };
-                        return (order[a] || 0) - (order[b] || 0);
-                      })
-                      .map(ts => {
-                        const label = ts === '08:00-14:00' ? 'M' : ts === '14:00-20:00' ? 'P' : 'N';
-                        return (
-                          <th key={`${room.id}-${ts}`} style={{ color: room.color }}>
-                            {room.name.substring(0, 3)}<span className="pf-slot-label">{label}</span>
-                          </th>
-                        );
-                      })
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {calendarDays.map(({ day, dateStr, isWeekend }) => {
-                  const date = new Date(year, month - 1, day);
-                  const weekday = WEEKDAYS[(date.getDay() + 6) % 7];
-                  const wdLabel = weekdayNames[date.getDay()];
-                  return (
-                    <tr key={day} className={isWeekend ? 'pf-weekend-row' : ''}>
-                      <td className="pf-day-cell">
-                        <span className="pf-day-num">{day}</span>
-                        <span className="pf-day-wd">{wdLabel}</span>
-                      </td>
-                      {rooms.flatMap(room =>
-                        room.slots
-                          .map(s => s.timeSlot)
-                          .filter((v, i, a) => a.indexOf(v) === i)
-                          .sort((a, b) => {
-                            const order: Record<string, number> = { '08:00-14:00': 0, '14:00-20:00': 1, '20:00-08:00': 2 };
-                            return (order[a] || 0) - (order[b] || 0);
-                          })
-                          .map(ts => {
-                            const hasSlotForDay = room.slots.some(s => s.weekday === weekday && s.timeSlot === ts);
-                            const existing = prefilledAssignments.find(
-                              a => a.date === dateStr && a.roomId === room.id && a.timeSlot === ts
-                            );
-                            const isSelected = pfSlot?.date === dateStr && pfSlot?.roomId === room.id && pfSlot?.timeSlot === ts;
-                            const doctor = existing ? doctors.find(d => d.id === existing.doctorId) : null;
+            <div className="pf-grid-header">
+              <div className="pf-grid-cell pf-day-col">G.</div>
+              {rooms.flatMap(room =>
+                room.slots
+                  .map(s => s.timeSlot)
+                  .filter((v, i, a) => a.indexOf(v) === i)
+                  .sort((a, b) => {
+                    const order: Record<string, number> = { '08:00-14:00': 0, '14:00-20:00': 1, '20:00-08:00': 2 };
+                    return (order[a] || 0) - (order[b] || 0);
+                  })
+                  .map(ts => {
+                    const label = ts === '08:00-14:00' ? 'M' : ts === '14:00-20:00' ? 'P' : 'N';
+                    return (
+                      <div key={`${room.id}-${ts}`} className="pf-grid-cell pf-header-cell" style={{ color: room.color }}>
+                        {room.name.substring(0, 3)}<span className="pf-slot-label">{label}</span>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+            <div className="pf-grid-body">
+              {calendarDays.map(({ day, dateStr, isWeekend }) => {
+                const date = new Date(year, month - 1, day);
+                const weekday = WEEKDAYS[(date.getDay() + 6) % 7];
+                const wdLabel = weekdayNames[date.getDay()];
+                return (
+                  <div key={day} className={`pf-grid-row ${isWeekend ? 'pf-weekend-row' : ''}`}>
+                    <div className="pf-grid-cell pf-day-col">
+                      <span className="pf-day-num">{day}</span>
+                      <span className="pf-day-wd">{wdLabel}</span>
+                    </div>
+                    {rooms.flatMap(room =>
+                      room.slots
+                        .map(s => s.timeSlot)
+                        .filter((v, i, a) => a.indexOf(v) === i)
+                        .sort((a, b) => {
+                          const order: Record<string, number> = { '08:00-14:00': 0, '14:00-20:00': 1, '20:00-08:00': 2 };
+                          return (order[a] || 0) - (order[b] || 0);
+                        })
+                        .map(ts => {
+                          const slot = room.slots.find(s => s.weekday === weekday && s.timeSlot === ts);
+                          if (!slot) {
+                            return <div key={`${room.id}-${ts}`} className="pf-grid-cell pf-cell-disabled" />;
+                          }
 
-                            if (!hasSlotForDay) {
-                              return <td key={`${room.id}-${ts}`} className="pf-cell pf-cell-disabled" />;
-                            }
+                          const cellAssignments = prefilledAssignments.filter(
+                            a => a.date === dateStr && a.roomId === room.id && a.timeSlot === ts
+                          );
+                          const maxDoctors = slot.requiredDoctors;
+                          const isFull = cellAssignments.length >= maxDoctors;
+                          const isSelected = pfSlot?.date === dateStr && pfSlot?.roomId === room.id && pfSlot?.timeSlot === ts;
 
-                            return (
-                              <td
-                                key={`${room.id}-${ts}`}
-                                className={`pf-cell ${existing ? 'pf-cell-filled' : ''} ${isSelected ? 'pf-cell-selected' : ''}`}
-                                style={existing ? { backgroundColor: (doctor?.color || '#888') + '25', borderColor: doctor?.color } : {}}
-                                onClick={() => {
-                                  if (existing) {
-                                    const updated = prefilledAssignments.filter(a => a.id !== existing.id);
-                                    setPrefilledAssignments(updated);
-                                    saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
-                                    setPfSlot(null);
-                                  } else {
-                                    setPfSlot(isSelected ? null : { date: dateStr, roomId: room.id, timeSlot: ts as TimeSlot });
-                                  }
-                                }}
-                                title={existing ? `${doctor?.name} — clicca per rimuovere` : 'Clicca per assegnare'}
-                              >
-                                {existing ? (
-                                  <span className="pf-cell-doctor" style={{ color: doctor?.color }}>
-                                    {doctor?.name?.substring(0, 4) || '?'}
+                          return (
+                            <div
+                              key={`${room.id}-${ts}`}
+                              className={`pf-grid-cell pf-cell ${isSelected ? 'pf-cell-selected' : ''} ${cellAssignments.length > 0 ? 'pf-cell-filled' : ''}`}
+                              onClick={() => {
+                                if (!isFull) {
+                                  setPfSlot(isSelected ? null : { date: dateStr, roomId: room.id, timeSlot: ts as TimeSlot });
+                                } else {
+                                  setPfSlot(null);
+                                }
+                              }}
+                              title={isFull ? `${cellAssignments.map(a => a.doctorName).join(', ')} (pieno)` : 'Clicca per assegnare'}
+                            >
+                              {cellAssignments.map(a => {
+                                const doc = doctors.find(d => d.id === a.doctorId);
+                                return (
+                                  <span
+                                    key={a.id}
+                                    className="pf-cell-doctor"
+                                    style={{ color: doc?.color, borderColor: doc?.color }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const updated = prefilledAssignments.filter(pa => pa.id !== a.id);
+                                      setPrefilledAssignments(updated);
+                                      saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
+                                    }}
+                                    title={`${doc?.name} — clicca per rimuovere`}
+                                  >
+                                    {doc?.name?.substring(0, 3) || '?'}
                                   </span>
-                                ) : isSelected ? '...' : ''}
-                              </td>
-                            );
-                          })
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                                );
+                              })}
+                              {!isFull && !isSelected && cellAssignments.length === 0 && (
+                                <span className="pf-cell-empty">+</span>
+                              )}
+                              {isSelected && <span className="pf-cell-empty">...</span>}
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {pfSlot && (
             <div className="pf-doctor-picker">
               <span className="pf-picker-label">
-                Assegna dottore per {parseInt(pfSlot.date.split('-')[2])} {monthNames[month - 1]} — {rooms.find(r => r.id === pfSlot.roomId)?.name} {pfSlot.timeSlot === '08:00-14:00' ? 'M' : pfSlot.timeSlot === '14:00-20:00' ? 'P' : 'N'}:
+                {parseInt(pfSlot.date.split('-')[2])} {monthNames[month - 1]} — {rooms.find(r => r.id === pfSlot.roomId)?.name} {pfSlot.timeSlot === '08:00-14:00' ? 'M' : pfSlot.timeSlot === '14:00-20:00' ? 'P' : 'N'}
               </span>
               <div className="pf-doctor-buttons">
-                {doctors.map(d => (
+                {doctors
+                  .filter(d => !prefilledAssignments.some(
+                    a => a.date === pfSlot.date && a.roomId === pfSlot.roomId && a.timeSlot === pfSlot.timeSlot && a.doctorId === d.id
+                  ))
+                  .map(d => (
                   <button
                     key={d.id}
                     className="pf-doctor-btn"
@@ -686,7 +701,14 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                       const updated = [...prefilledAssignments, newAssignment];
                       setPrefilledAssignments(updated);
                       saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
-                      setPfSlot(null);
+                      // Check if slot is now full
+                      const slot = room.slots.find(s => s.timeSlot === pfSlot.timeSlot);
+                      const newCount = updated.filter(
+                        a => a.date === pfSlot.date && a.roomId === pfSlot.roomId && a.timeSlot === pfSlot.timeSlot
+                      ).length;
+                      if (slot && newCount >= slot.requiredDoctors) {
+                        setPfSlot(null);
+                      }
                     }}
                   >
                     {d.name}

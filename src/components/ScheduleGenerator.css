@@ -671,19 +671,33 @@
 .pf-grid-container {
   overflow-x: auto;
   margin-bottom: 8px;
+  max-height: 500px;
+  overflow-y: auto;
 }
 
-.pf-grid {
-  width: 100%;
-  border-collapse: collapse;
+.pf-grid-header, .pf-grid-row {
+  display: flex;
+  gap: 1px;
+}
+
+.pf-grid-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-primary, #1a1a2e);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.pf-grid-cell {
+  flex: 1;
+  min-width: 42px;
   font-size: 0.6875rem;
 }
 
-.pf-grid th {
-  padding: 4px 6px;
+.pf-header-cell {
+  padding: 4px 2px;
   font-weight: 600;
   text-align: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   white-space: nowrap;
   font-size: 0.625rem;
 }
@@ -695,18 +709,16 @@
 }
 
 .pf-day-col {
-  width: 50px;
-  text-align: left !important;
-}
-
-.pf-day-cell {
-  padding: 2px 4px;
-  white-space: nowrap;
+  flex: 0 0 48px !important;
+  min-width: 48px !important;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
 }
 
 .pf-day-num {
   font-weight: 600;
-  margin-right: 3px;
 }
 
 .pf-day-wd {
@@ -719,12 +731,16 @@
 }
 
 .pf-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   padding: 2px;
-  text-align: center;
+  min-height: 22px;
   border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
   cursor: pointer;
-  min-width: 40px;
-  height: 24px;
   transition: background 0.1s;
 }
 
@@ -735,14 +751,14 @@
 .pf-cell-disabled {
   background: rgba(0, 0, 0, 0.15);
   cursor: default;
+  border-color: transparent;
 }
 .pf-cell-disabled:hover {
   background: rgba(0, 0, 0, 0.15);
 }
 
 .pf-cell-filled {
-  border: 1px solid;
-  cursor: pointer;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .pf-cell-selected {
@@ -752,11 +768,30 @@
 
 .pf-cell-doctor {
   font-weight: 600;
+  font-size: 0.5625rem;
+  padding: 1px 3px;
+  border-radius: 2px;
+  border: 1px solid;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.pf-cell-doctor:hover {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.pf-cell-empty {
+  opacity: 0.2;
   font-size: 0.625rem;
 }
 
 .pf-doctor-picker {
-  padding: 8px 0;
+  padding: 8px;
+  margin-top: 4px;
+  background: rgba(52, 152, 219, 0.08);
+  border: 1px solid rgba(52, 152, 219, 0.2);
+  border-radius: 8px;
   animation: fadeIn 0.15s ease;
 }
 
@@ -764,7 +799,7 @@
   display: block;
   font-size: 0.75rem;
   margin-bottom: 6px;
-  opacity: 0.7;
+  font-weight: 600;
 }
 
 .pf-doctor-buttons {
