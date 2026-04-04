@@ -584,40 +584,36 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                     const isSelected = dayState !== 'none';
 
                     return (
-                      <div
+                      <button
                         key={day}
-                        className={`mini-day ${isWeekendOrHoliday ? 'weekend-or-holiday' : ''} ${dayState === 'full' ? (mode === 'exclusion' ? 'excluded' : 'available') : ''} ${dayState === 'partial' ? 'partial' : ''}`}
-                        style={isSelected ? { backgroundColor: doctor?.color + (dayState === 'partial' ? '60' : '') } : {}}
+                        className={`mini-day ${isWeekendOrHoliday ? 'weekend-or-holiday' : ''} ${dayState === 'full' ? (mode === 'exclusion' ? 'excluded' : 'available') : ''} ${dayState === 'partial' ? (mode === 'exclusion' ? 'excluded' : 'available') + ' partial' : ''}`}
+                        style={isSelected ? { backgroundColor: doctor?.color + (dayState === 'partial' ? '80' : '') } : {}}
+                        onClick={() => toggleDoctorDateEntry(selectedDoctor, dateStr, mode)}
+                        title={isSelected ? 'Clicca per rimuovere' : 'Clicca per selezionare'}
                       >
-                        <span
-                          className="mini-day-label"
-                          onClick={() => toggleDoctorDateEntry(selectedDoctor, dateStr, mode)}
-                          title={isSelected ? 'Clicca per rimuovere tutto il giorno' : 'Clicca per selezionare tutto il giorno'}
-                        >
-                          {day}
-                        </span>
+                        {day}
                         {isSelected && (
-                          <div className="mini-day-slots">
+                          <span className="mini-day-slots">
                             {TIME_SLOTS.map(ts => {
                               const slotActive = selectedSlots.includes(ts);
-                              const label = TIME_SLOT_TIME_LABELS[ts];
+                              const label = ts === '08:00-14:00' ? 'M' : ts === '14:00-20:00' ? 'P' : 'N';
                               return (
-                                <button
+                                <span
                                   key={ts}
-                                  className={`mini-slot-btn ${slotActive ? 'active' : ''}`}
+                                  className={`mini-slot-chip ${slotActive ? 'on' : 'off'}`}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     toggleDoctorDateEntry(selectedDoctor, `${dateStr}:${ts}`, mode);
                                   }}
-                                  title={`${label}: ${slotActive ? 'attivo' : 'non attivo'}`}
+                                  title={`${TIME_SLOT_TIME_LABELS[ts]}: ${slotActive ? 'attivo' : 'non attivo'}`}
                                 >
                                   {label}
-                                </button>
+                                </span>
                               );
                             })}
-                          </div>
+                          </span>
                         )}
-                      </div>
+                      </button>
                     );
                   })}
                 </div>

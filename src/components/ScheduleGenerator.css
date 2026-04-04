@@ -335,14 +335,17 @@
 }
 
 .mini-day {
-  aspect-ratio: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   font-size: 0.8125rem;
   font-weight: 500;
   border: 2px solid transparent;
   border-radius: 6px;
+  padding: 4px 2px;
+  min-height: 32px;
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -645,38 +648,34 @@
 
 .mini-day.partial {
   border-style: dashed !important;
-}
-
-.mini-day-label {
-  cursor: pointer;
-  font-weight: 600;
+  opacity: 0.85;
 }
 
 .mini-day-slots {
   display: flex;
   gap: 1px;
-  margin-top: 2px;
 }
 
-.mini-slot-btn {
-  font-size: 0.45rem;
-  padding: 1px 2px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+.mini-slot-chip {
+  font-size: 0.5rem;
+  padding: 0 2px;
   border-radius: 2px;
-  background: rgba(0, 0, 0, 0.3);
-  color: rgba(255, 255, 255, 0.5);
   cursor: pointer;
-  line-height: 1;
+  line-height: 1.2;
+  font-weight: 700;
 }
 
-.mini-slot-btn.active {
-  background: rgba(255, 255, 255, 0.2);
+.mini-slot-chip.on {
   color: white;
-  border-color: rgba(255, 255, 255, 0.4);
 }
 
-.mini-slot-btn:hover {
-  opacity: 0.8;
+.mini-slot-chip.off {
+  color: rgba(255, 255, 255, 0.3);
+  text-decoration: line-through;
+}
+
+.mini-slot-chip:hover {
+  opacity: 0.7;
 }
 
 .doctor-date-exclusions {
