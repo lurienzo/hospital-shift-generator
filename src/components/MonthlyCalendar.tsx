@@ -28,7 +28,7 @@ interface EditingCell {
   timeSlot: TimeSlot;
 }
 
-type CalendarView = 'rooms' | 'doctors';
+type CalendarView = 'rooms' | 'doctors' | 'monthly';
 type SortColumn = 'name' | 'shifts' | 'days' | 'hours' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | `room-${string}`;
 type SortDirection = 'asc' | 'desc';
 
@@ -146,6 +146,7 @@ export function MonthlyCalendar({
   const monthNames = MONTH_NAMES_FULL;
 
   const weekdayNames = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
+  const weekdayNamesFull = ['Lunedi', 'Martedi', 'Mercoledi', 'Giovedi', 'Venerdi', 'Sabato', 'Domenica'];
 
   const daysInMonth = schedule ? new Date(schedule.year, schedule.month, 0).getDate() : 0;
   const stats = schedule ? ScheduleGeneratorService.calculateStats(schedule, doctors, rooms) : [];
@@ -626,11 +627,17 @@ export function MonthlyCalendar({
             >
               🏥 Per Sala
             </button>
-            <button 
+            <button
               className={`view-toggle-btn ${calendarView === 'doctors' ? 'active' : ''}`}
               onClick={() => setCalendarView('doctors')}
             >
               👨‍⚕️ Per Dottore
+            </button>
+            <button
+              className={`view-toggle-btn ${calendarView === 'monthly' ? 'active' : ''}`}
+              onClick={() => setCalendarView('monthly')}
+            >
+              📅 Calendario
             </button>
           </div>
           <button className="btn-download" onClick={handleDownloadCSV}>
@@ -941,6 +948,91 @@ export function MonthlyCalendar({
             })}
           </tbody>
         </table>
+      </div>
+      )}
+
+      {calendarView === 'monthly' && (
+      <div className="monthly-grid-container">
+        <div className="monthly-grid-header">
+          {[1, 2, 3, 4, 5, 6, 0].map(dayIdx => (
+            <div key={dayIdx} className={`monthly-grid-header-cell ${dayIdx === 0 || dayIdx === 6 ? 'weekend' : ''}`}>
+              {weekdayNamesFull[dayIdx === 0 ? 6 : dayIdx - 1]}
+            </div>
+          ))}
+        </div>
+        <div className="monthly-grid-body">
+          {(() => {
+            const firstDayOfMonth = new Date(schedule.year, schedule.month - 1, 1);
+            const startOffset = (firstDayOfMonth.getDay() + 6) % 7;
+            const totalCells = startOffset + daysInMonth;
+            const totalRows = Math.ceil(totalCells / 7);
+
+            return Array.from({ length: totalRows }, (_, weekIdx) => (
+              <div key={weekIdx} className="monthly-grid-week">
+                {Array.from({ length: 7 }, (_, colIdx) => {
+                  const cellIdx = weekIdx * 7 + colIdx;
+                  const day = cellIdx - startOffset + 1;
+
+                  if (day < 1 || day > daysInMonth) {
+                    return <div key={colIdx} className="monthly-grid-cell empty" />;
+                  }
+
+                  const dateStr = `${schedule.year}-${String(schedule.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                  const weekendHoliday = isWeekendOrHoliday(dateStr);
+                  const isWeekendOrHolidayDay = weekendHoliday.isWeekend || weekendHoliday.isHoliday;
+                  const dayAssignments = schedule.assignments
+                    .filter(a => a.date === dateStr)
+                    .sort((a, b) => TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot]);
+
+                  const byRoom = new Map<string, typeof dayAssignments>();
+                  for (const a of dayAssignments) {
+                    if (!byRoom.has(a.roomId)) byRoom.set(a.roomId, []);
+                    byRoom.get(a.roomId)!.push(a);
+                  }
+
+                  return (
+                    <div key={colIdx} className={`monthly-grid-cell ${isWeekendOrHolidayDay ? 'weekend-or-holiday' : ''}`}>
+                      <div className="monthly-grid-day-number">
+                        {day}
+                        {weekendHoliday.isHoliday && !weekendHoliday.isWeekend && <span className="holiday-marker">🎄</span>}
+                      </div>
+                      <div className="monthly-grid-assignments">
+                        {rooms.map(room => {
+                          const roomAssignments = byRoom.get(room.id);
+                          if (!roomAssignments || roomAssignments.length === 0) return null;
+
+                          return (
+                            <div key={room.id} className="monthly-grid-room-group">
+                              <div className="monthly-grid-room-label" style={{ backgroundColor: room.color + '30', borderColor: room.color }}>
+                                {room.name.substring(0, 4)}
+                              </div>
+                              {roomAssignments.map(assignment => {
+                                const invalidReason = getAssignmentInvalidReason(assignment);
+                                const timeLabel = assignment.timeSlot === '08:00-14:00' ? 'M' : assignment.timeSlot === '14:00-20:00' ? 'P' : 'N';
+                                return (
+                                  <div
+                                    key={assignment.id}
+                                    className={`monthly-grid-assignment ${invalidReason ? 'has-warning' : ''}`}
+                                    style={{ backgroundColor: getDoctorColor(assignment.doctorId) + '25', borderLeft: `3px solid ${getDoctorColor(assignment.doctorId)}` }}
+                                    title={`${assignment.doctorName} - ${room.name} ${assignment.timeSlot}${invalidReason ? ` ⚠️ ${invalidReason}` : ''}`}
+                                  >
+                                    {invalidReason && <span className="warning-dot">⚠️</span>}
+                                    <span className="assignment-time">{timeLabel}</span>
+                                    <span className="assignment-doctor">{assignment.doctorName}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ));
+          })()}
+        </div>
       </div>
       )}
 
