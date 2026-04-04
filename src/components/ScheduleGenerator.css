@@ -668,90 +668,128 @@
   font-weight: 600;
 }
 
-.prefilled-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.prefilled-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 6px;
-  font-size: 0.75rem;
-}
-
-.pf-date { font-weight: 600; opacity: 0.8; }
-.pf-slot { font-weight: 700; opacity: 0.6; font-size: 0.6875rem; }
-.pf-remove {
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.4);
-  cursor: pointer;
-  padding: 0 2px;
-  font-size: 0.75rem;
-}
-.pf-remove:hover { color: #e74c3c; }
-
-.btn-add-prefilled {
-  padding: 6px 14px;
-  border: 1px dashed rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.6);
-  cursor: pointer;
-  font-size: 0.8125rem;
-}
-.btn-add-prefilled:hover {
-  border-color: rgba(255, 255, 255, 0.4);
-  color: white;
-}
-
-.prefilled-form { animation: fadeIn 0.2s ease; }
-
-.pf-row {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+.pf-grid-container {
+  overflow-x: auto;
   margin-bottom: 8px;
 }
 
-.pf-row select {
-  padding: 6px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  color: white;
-  font-size: 0.8125rem;
-  min-width: 100px;
-  flex: 1;
+.pf-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.6875rem;
 }
 
-.pf-actions { display: flex; gap: 8px; }
+.pf-grid th {
+  padding: 4px 6px;
+  font-weight: 600;
+  text-align: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  white-space: nowrap;
+  font-size: 0.625rem;
+}
 
-.btn-confirm-pf {
-  padding: 6px 14px;
-  border: 1px solid rgba(46, 204, 113, 0.4);
-  border-radius: 6px;
-  background: rgba(46, 204, 113, 0.15);
-  color: #2ecc71;
+.pf-slot-label {
+  font-weight: 400;
+  opacity: 0.6;
+  margin-left: 1px;
+}
+
+.pf-day-col {
+  width: 50px;
+  text-align: left !important;
+}
+
+.pf-day-cell {
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+
+.pf-day-num {
+  font-weight: 600;
+  margin-right: 3px;
+}
+
+.pf-day-wd {
+  opacity: 0.5;
+  font-size: 0.5625rem;
+}
+
+.pf-weekend-row {
+  background: rgba(243, 156, 18, 0.06);
+}
+
+.pf-cell {
+  padding: 2px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.05);
   cursor: pointer;
-  font-size: 0.8125rem;
+  min-width: 40px;
+  height: 24px;
+  transition: background 0.1s;
 }
-.btn-confirm-pf:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.btn-cancel-pf {
-  padding: 6px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
+.pf-cell:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.pf-cell-disabled {
+  background: rgba(0, 0, 0, 0.15);
+  cursor: default;
+}
+.pf-cell-disabled:hover {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.pf-cell-filled {
+  border: 1px solid;
+  cursor: pointer;
+}
+
+.pf-cell-selected {
+  background: rgba(52, 152, 219, 0.2) !important;
+  border-color: rgba(52, 152, 219, 0.5) !important;
+}
+
+.pf-cell-doctor {
+  font-weight: 600;
+  font-size: 0.625rem;
+}
+
+.pf-doctor-picker {
+  padding: 8px 0;
+  animation: fadeIn 0.15s ease;
+}
+
+.pf-picker-label {
+  display: block;
+  font-size: 0.75rem;
+  margin-bottom: 6px;
+  opacity: 0.7;
+}
+
+.pf-doctor-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pf-doctor-btn {
+  padding: 4px 10px;
+  border: 1px solid;
+  border-radius: 4px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.5);
   cursor: pointer;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
+  transition: background 0.1s;
+}
+
+.pf-doctor-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pf-cancel-btn {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  color: rgba(255, 255, 255, 0.4) !important;
 }
 
 @keyframes fadeIn {
