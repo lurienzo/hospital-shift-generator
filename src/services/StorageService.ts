@@ -341,7 +341,7 @@ export class StorageService {
     // Helper to format assignment for doctor view
     const formatAssignment = (roomId: string, timeSlot: string): string => {
       const room = rooms.find(r => r.id === roomId);
-      const roomAbbr = room ? room.name.substring(0, 4) : roomId.substring(0, 4);
+      const roomAbbr = room ? room.name : roomId;
       const slotAbbr = TIME_SLOT_TIME_LABELS[timeSlot as keyof typeof TIME_SLOT_TIME_LABELS] || timeSlot;
       return `${roomAbbr} ${slotAbbr}`;
     };

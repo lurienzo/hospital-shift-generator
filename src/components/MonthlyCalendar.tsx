@@ -1006,7 +1006,7 @@ export function MonthlyCalendar({
                           return (
                             <div key={room.id} className="monthly-grid-room-group">
                               <div className="monthly-grid-room-label" style={{ backgroundColor: room.color + '30', borderColor: room.color }}>
-                                {room.name.substring(0, 4)}
+                                {room.name}
                               </div>
                               {roomAssignments.map(assignment => {
                                 const invalidReason = getAssignmentInvalidReason(assignment);
