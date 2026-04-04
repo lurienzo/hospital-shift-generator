@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS } from '../models/types';
+import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS, TIME_SLOT_TIME_LABELS } from '../models/types';
 import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { MONTH_NAMES_FULL, getYearRange } from '../utils/constants';
@@ -583,10 +583,9 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
                     return (order[a] || 0) - (order[b] || 0);
                   })
                   .map(ts => {
-                    const label = ts === '08:00-14:00' ? 'M' : ts === '14:00-20:00' ? 'P' : 'N';
                     return (
                       <div key={`${room.id}-${ts}`} className="pf-grid-cell pf-header-cell" style={{ color: room.color }}>
-                        {room.name.substring(0, 3)}<span className="pf-slot-label">{label}</span>
+                        {room.name.substring(0, 3)}<span className="pf-slot-label">{TIME_SLOT_TIME_LABELS[ts as TimeSlot]}</span>
                       </div>
                     );
                   })
@@ -673,7 +672,7 @@ export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, presele
           {pfSlot && (
             <div className="pf-doctor-picker">
               <span className="pf-picker-label">
-                {parseInt(pfSlot.date.split('-')[2])} {monthNames[month - 1]} — {rooms.find(r => r.id === pfSlot.roomId)?.name} {pfSlot.timeSlot === '08:00-14:00' ? 'M' : pfSlot.timeSlot === '14:00-20:00' ? 'P' : 'N'}
+                {parseInt(pfSlot.date.split('-')[2])} {monthNames[month - 1]} — {rooms.find(r => r.id === pfSlot.roomId)?.name} {TIME_SLOT_TIME_LABELS[pfSlot.timeSlot]}
               </span>
               <div className="pf-doctor-buttons">
                 {doctors

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { MonthlySchedule, OperativeRoom, Doctor, Assignment, TimeSlot, TIME_SLOTS, TIME_SLOT_LABELS, TIME_SLOT_ORDER } from '../models/types';
+import { MonthlySchedule, OperativeRoom, Doctor, Assignment, TimeSlot, TIME_SLOTS, TIME_SLOT_LABELS, TIME_SLOT_ORDER, TIME_SLOT_TIME_LABELS } from '../models/types';
 import { ScheduleGeneratorService } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { generateId } from '../utils/idGenerator';
@@ -1010,7 +1010,7 @@ export function MonthlyCalendar({
                               </div>
                               {roomAssignments.map(assignment => {
                                 const invalidReason = getAssignmentInvalidReason(assignment);
-                                const timeLabel = assignment.timeSlot === '08:00-14:00' ? 'M' : assignment.timeSlot === '14:00-20:00' ? 'P' : 'N';
+                                const timeLabel = TIME_SLOT_TIME_LABELS[assignment.timeSlot];
                                 return (
                                   <div
                                     key={assignment.id}

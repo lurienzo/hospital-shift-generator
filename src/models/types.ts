@@ -30,6 +30,12 @@ export const TIME_SLOT_SHORT_LABELS: Record<TimeSlot, string> = {
   '20:00-08:00': 'Notte',
 };
 
+export const TIME_SLOT_TIME_LABELS: Record<TimeSlot, string> = {
+  '08:00-14:00': '08-14',
+  '14:00-20:00': '14-20',
+  '20:00-08:00': '20-08',
+};
+
 export const TIME_SLOT_ORDER: Record<TimeSlot, number> = {
   '08:00-14:00': 0,
   '14:00-20:00': 1,
