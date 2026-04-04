@@ -849,7 +849,7 @@ export function MonthlyCalendar({
                                       const hasWarning = (nextDayConflicts > 0 || sameDayConflicts > 0 || isOnRestDay || hasExclusiveConflict || isOnVacation) && !isCurrent;
                                       
                                       let warningText = '';
-                                      if (isOnVacation) warningText = 'Ferie';
+                                      if (isOnVacation) warningText = 'Non disponibile';
                                       else if (isOnRestDay) warningText = 'Smontante';
                                       else if (hasExclusiveConflict) warningText = 'Montante';
                                       else if (sameDayConflicts > 0) warningText = `${sameDayConflicts} oggi`;
@@ -1132,7 +1132,7 @@ export function MonthlyCalendar({
                     const hasWarning = isOnRestDay || nextDayConflicts > 0 || sameDayConflicts > 0 || hasExclusiveConflict || isOnVacation;
                     
                     let warningText = '';
-                    if (isOnVacation) warningText = 'Ferie';
+                    if (isOnVacation) warningText = 'Non disponibile';
                     else if (isOnRestDay) warningText = 'Smontante';
                     else if (hasExclusiveConflict) warningText = 'Montante';
                     else if (sameDayConflicts > 0) warningText = `${sameDayConflicts} oggi`;
