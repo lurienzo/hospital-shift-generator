@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS, TIME_SLOTS, TIME_SLOT_SHORT_LABELS } from '../models/types';
+import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS, TIME_SLOT_SHORT_LABELS } from '../models/types';
 import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { MONTH_NAMES_FULL, getYearRange } from '../utils/constants';
