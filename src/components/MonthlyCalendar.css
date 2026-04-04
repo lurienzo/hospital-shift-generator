@@ -971,11 +971,20 @@
 
 /* Warning stat card */
 .stat-card.warning-stat {
-  border-color: rgba(241, 196, 15, 0.6);
-  background: rgba(241, 196, 15, 0.12);
+  border-color: rgba(231, 76, 60, 0.6);
+  background: rgba(231, 76, 60, 0.12);
 }
 
 .stat-card.warning-stat .stat-value {
+  color: #e74c3c;
+}
+
+.stat-card.notice-stat {
+  border-color: rgba(241, 196, 15, 0.5);
+  background: rgba(241, 196, 15, 0.08);
+}
+
+.stat-card.notice-stat .stat-value {
   color: #f1c40f;
 }
 

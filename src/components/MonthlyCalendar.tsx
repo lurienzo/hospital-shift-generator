@@ -286,9 +286,17 @@ export function MonthlyCalendar({
     return null;
   };
 
-  const invalidAssignments = useMemo(() => {
-    if (!schedule) return [];
-    return schedule.assignments.filter(a => getAssignmentInvalidReason(a) !== null);
+  const { errorAssignments, noticeAssignments } = useMemo(() => {
+    if (!schedule) return { errorAssignments: [], noticeAssignments: [] };
+    const errors: Assignment[] = [];
+    const notices: Assignment[] = [];
+    for (const a of schedule.assignments) {
+      const result = getAssignmentInvalidReason(a);
+      if (!result) continue;
+      if (result.severity === 'error') errors.push(a);
+      else notices.push(a);
+    }
+    return { errorAssignments: errors, noticeAssignments: notices };
   }, [schedule, rooms, generationConfig]);
 
   const getNextDayStr = (date: string): string => {
@@ -705,10 +713,16 @@ export function MonthlyCalendar({
             <span className="stat-label">Critici/Dottore</span>
           </div>
         )}
-        {invalidAssignments.length > 0 && (
+        {errorAssignments.length > 0 && (
           <div className="stat-card warning-stat">
-            <span className="stat-value">⚠️ {invalidAssignments.length}</span>
-            <span className="stat-label">Turni Invalidi</span>
+            <span className="stat-value">⚠️ {errorAssignments.length}</span>
+            <span className="stat-label">Errori</span>
+          </div>
+        )}
+        {noticeAssignments.length > 0 && (
+          <div className="stat-card notice-stat">
+            <span className="stat-value">ℹ️ {noticeAssignments.length}</span>
+            <span className="stat-label">Avvisi</span>
           </div>
         )}
       </div>
