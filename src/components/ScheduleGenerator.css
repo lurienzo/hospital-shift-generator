@@ -649,6 +649,10 @@
 
 /* ========== Pre-filled Assignments ========== */
 
+.prefilled-config {
+  margin-top: 1.5rem;
+}
+
 .prefilled-config h3 {
   display: flex;
   align-items: center;
