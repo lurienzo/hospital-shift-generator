@@ -9,7 +9,7 @@
  *   node tools/smoke.mjs
  */
 import { chromium } from 'playwright';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 
 const BASE = process.env.APP_URL ?? 'http://localhost:5173/hospital-shift-generator/';
 const OUT = 'tools/screenshots';
@@ -17,10 +17,39 @@ mkdirSync(OUT, { recursive: true });
 
 const errors = [];
 const browser = await chromium.launch();
-const page = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
+const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+
+/*
+ * Se l'applicazione e compilata con una password di accesso, il blocco
+ * comparirebbe prima dell'interfaccia e la verifica si fermerebbe li. Lo
+ * sblocco viene seminato a mano: la chiave contiene l'impronta attesa, che in
+ * sviluppo sta in `.env.local`. Senza impronta il blocco non si attiva e non
+ * c'e niente da sbloccare.
+ */
+const expectedHash = readExpectedHash();
+if (expectedHash) {
+  await context.addInitScript(hash => {
+    sessionStorage.setItem('hsg_unlocked', hash);
+  }, expectedHash);
+}
+
+const page = await context.newPage();
 
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
+
+/** Impronta della password di accesso, se l'applicazione ne ha una. */
+function readExpectedHash() {
+  const fromEnv = process.env.VITE_APP_PASSWORD_SHA256;
+  if (fromEnv) return fromEnv.trim().toLowerCase();
+  try {
+    const file = readFileSync('.env.local', 'utf8');
+    const match = file.match(/^VITE_APP_PASSWORD_SHA256\s*=\s*(\S+)/m);
+    return match ? match[1].trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
 
 const shot = async name => {
   await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });

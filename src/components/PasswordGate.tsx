@@ -21,21 +21,28 @@ import './PasswordGate.css';
 const EXPECTED_HASH = (import.meta.env.VITE_APP_PASSWORD_SHA256 ?? '').trim().toLowerCase();
 
 /**
- * Lo sblocco vale per la sessione del browser: riaprendo la scheda va
- * reinserito, chiudendo e riaprendo un collegamento nella stessa sessione no.
+ * Chiave dello sblocco, la stessa nei due archivi del browser. Dove finisce
+ * dipende dalla spunta «ricorda la password»:
+ *
+ * - senza spunta va in `sessionStorage`, quindi vale finché il browser resta
+ *   aperto e si ripete alla prossima apertura;
+ * - con la spunta va in `localStorage`, quindi resta fino a quando non si
+ *   dimentica da Impostazioni.
+ *
+ * Il valore salvato è l'impronta attesa, non un semplice "sì": se la password
+ * dell'applicazione viene cambiata, quella ricordata non sblocca più niente.
  */
 const UNLOCK_KEY = 'hsg_unlocked';
+
+type Scope = 'session' | 'persistent';
 
 export function PasswordGate({ children }: { children: ReactNode }) {
   const enabled = EXPECTED_HASH.length > 0;
 
   const [unlocked, setUnlocked] = useState(() => {
     if (!enabled) return true;
-    try {
-      return sessionStorage.getItem(UNLOCK_KEY) === EXPECTED_HASH;
-    } catch {
-      return false;
-    }
+    return readUnlock('persistent') === EXPECTED_HASH
+      || readUnlock('session') === EXPECTED_HASH;
   });
 
   if (unlocked) return <>{children}</>;
@@ -44,6 +51,7 @@ export function PasswordGate({ children }: { children: ReactNode }) {
 
 function PasswordForm({ onUnlock }: { onUnlock: () => void }) {
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -66,10 +74,15 @@ function PasswordForm({ onUnlock }: { onUnlock: () => void }) {
         return;
       }
 
-      try {
-        sessionStorage.setItem(UNLOCK_KEY, EXPECTED_HASH);
-      } catch {
-        // Senza sessionStorage l'accesso vale solo per questa schermata.
+      // Lo sblocco va in un archivio solo. Ripulire anche l'altro serve al caso
+      // di chi aveva spuntato «ricorda» e ora non lo vuole più: senza questo il
+      // valore permanente resterebbe lì a sbloccare per sempre.
+      if (remember) {
+        clearUnlock('session');
+        writeUnlock('persistent');
+      } else {
+        clearUnlock('persistent');
+        writeUnlock('session');
       }
       onUnlock();
     } catch (cause) {
@@ -101,6 +114,15 @@ function PasswordForm({ onUnlock }: { onUnlock: () => void }) {
           />
         </div>
 
+        <label className="checkbox gate-remember">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={event => setRemember(event.target.checked)}
+          />
+          <span>Ricorda la password su questo dispositivo</span>
+        </label>
+
         {error && <p className="gate-error">{error}</p>}
 
         <button
@@ -113,9 +135,50 @@ function PasswordForm({ onUnlock }: { onUnlock: () => void }) {
 
         <p className="gate-note">
           I turni restano salvati in questo browser e non passano da nessun server.
+          {remember && ' Per farla richiedere di nuovo: Impostazioni, riquadro Accesso.'}
         </p>
       </form>
     </div>
+  );
+}
+
+/**
+ * Riquadro in Impostazioni per disdire il «ricorda la password».
+ *
+ * Non rimette il blocco sulla sessione in corso, di proposito: farlo adesso
+ * smonterebbe l'applicazione e porterebbe via le modifiche non salvate. Toglie
+ * solo il ricordo, così il blocco ricompare alla prossima apertura.
+ */
+export function PasswordAccessSettings() {
+  const [remembered, setRemembered] = useState(() => readUnlock('persistent') === EXPECTED_HASH);
+
+  if (EXPECTED_HASH.length === 0) return null;
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h3>Accesso</h3>
+          <p className="hint">
+            {remembered
+              ? 'La password è ricordata su questo browser e l’applicazione si apre senza chiederla. Dimenticala se il computer non è solo tuo.'
+              : 'La password viene chiesta a ogni nuova apertura del browser. Per non ripeterla, spunta «Ricorda la password su questo dispositivo» quando la inserisci.'}
+          </p>
+        </div>
+        {remembered && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              clearUnlock('persistent');
+              setRemembered(false);
+            }}
+          >
+            Dimentica la password
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -126,4 +189,39 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)]
     .map(byte => byte.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/*
+ * Accesso agli archivi del browser. Quando i cookie sono bloccati, leggere
+ * `localStorage` può essere vietato del tutto e non solo fallire in scrittura:
+ * per questo anche la scelta dell'archivio sta dentro il `try`. Se non è
+ * raggiungibile, lo sblocco vale solo per la schermata corrente.
+ */
+
+function storageFor(scope: Scope): Storage {
+  return scope === 'persistent' ? localStorage : sessionStorage;
+}
+
+function readUnlock(scope: Scope): string | null {
+  try {
+    return storageFor(scope).getItem(UNLOCK_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeUnlock(scope: Scope): void {
+  try {
+    storageFor(scope).setItem(UNLOCK_KEY, EXPECTED_HASH);
+  } catch {
+    // Vedi il commento sopra.
+  }
+}
+
+function clearUnlock(scope: Scope): void {
+  try {
+    storageFor(scope).removeItem(UNLOCK_KEY);
+  } catch {
+    // Vedi il commento sopra.
+  }
 }

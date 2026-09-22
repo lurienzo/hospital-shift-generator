@@ -316,8 +316,24 @@ gh secret set VITE_APP_PASSWORD_SHA256 --body <impronta>
 ```
 
 Se la variabile non è impostata il blocco non si attiva e l'applicazione si apre
-senza chiedere nulla: è il comportamento voluto in sviluppo e nei test. Lo
-sblocco vale per la sessione del browser.
+senza chiedere nulla: è il comportamento voluto in sviluppo e nei test. Per
+questo `tools/smoke.mjs` semina lo sblocco da sé leggendo l'impronta da
+`.env.local`, altrimenti la verifica visiva si fermerebbe sul blocco.
+
+### Quanto dura lo sblocco
+
+Di default vale per la sessione del browser: sta in `sessionStorage`, quindi
+riaprendo il browser la password va reinserita. Spuntando **«Ricorda la password
+su questo dispositivo»** finisce invece in `localStorage` e resta.
+
+Si disdice da *Impostazioni → Accesso*, con **Dimentica la password**. Quel
+pulsante non rimette il blocco sulla sessione in corso, di proposito: farlo
+smonterebbe l'applicazione e porterebbe via le modifiche non salvate. Toglie il
+ricordo, e il blocco ricompare alla prossima apertura.
+
+Nei due casi il valore salvato è l'impronta attesa, non un semplice sì. Così
+cambiando la password dell'applicazione chi aveva spuntato «ricorda» si ritrova
+il blocco, invece di restare dentro con un permesso vecchio.
 
 ## Pubblicazione
 

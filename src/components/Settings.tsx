@@ -22,6 +22,7 @@ import { SchemeEditor } from './SchemeEditor';
 import { ServiceManager } from './ServiceManager';
 import { RotationRuleEditor } from './RotationRuleEditor';
 import { HoursTargetEditor } from './HoursTargetEditor';
+import { PasswordAccessSettings } from './PasswordGate';
 import { generateId } from '../utils/id';
 import './Settings.css';
 
@@ -359,6 +360,9 @@ export function Settings({ hasUnsavedChanges }: SettingsProps) {
       <RotationRuleEditor />
 
       <HoursTargetEditor />
+
+      {/* Ultimo perché riguarda l'applicazione, non il servizio attivo. */}
+      <PasswordAccessSettings />
 
       {editingScheme && (
         <SchemeEditor
