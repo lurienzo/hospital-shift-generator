@@ -1,65 +1,67 @@
-name: Deploy to GitHub Pages
+name: Pubblicazione su GitHub Pages
 
 on:
   push:
     branches: [master]
   workflow_dispatch:
 
+# Permessi minimi: leggere il codice e pubblicare su Pages. Nessuna scrittura
+# sul contenuto del repo, e nessun accesso ad altri repository.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Una pubblicazione per volta. Non annulliamo quella in corso: interromperla a
+# metà lascerebbe il sito in uno stato incoerente.
 concurrency:
-  group: deploy-hospital-shift-generator
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  compilazione:
     runs-on: ubuntu-latest
-
-    env:
-      APP_NAME: hospital-shift-generator
-
     steps:
-      - name: Checkout private repo
+      - name: Scaricamento del codice
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Preparazione di Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Installazione delle dipendenze
         run: npm ci
 
       - name: Controlli
         run: npm run check
 
-      - name: Build
+      - name: Configurazione di Pages
+        uses: actions/configure-pages@v5
+        with:
+          # Attiva Pages al primo giro, se non è già attivo nelle impostazioni.
+          enablement: true
+
+      - name: Compilazione
         run: npm run build
         env:
-          # Impronta della password di accesso. Se il segreto non e impostato
-          # l'applicazione si apre senza chiedere nulla.
+          # Impronta SHA-256 della password di accesso. Se il segreto non è
+          # impostato l'applicazione si apre senza chiedere nulla.
           VITE_APP_PASSWORD_SHA256: ${{ secrets.VITE_APP_PASSWORD_SHA256 }}
 
-      - name: Checkout del sito di destinazione
-        uses: actions/checkout@v4
+      - name: Caricamento del sito compilato
+        uses: actions/upload-pages-artifact@v3
         with:
-          repository: ${{ vars.PAGES_REPOSITORY }}
-          token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
-          path: target-repo
+          path: dist
 
-      - name: Deploy to subfolder
-        run: |
-          rm -rf target-repo/public/${{ env.APP_NAME }}
-          cp -r dist target-repo/public/${{ env.APP_NAME }}
-
-      - name: Commit and push
-        working-directory: target-repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/${{ env.APP_NAME }}/
-          if git diff --staged --quiet; then
-            echo "No changes to deploy"
-          else
-            git commit -m "Deploy HSG from ${GITHUB_SHA::7}"
-            git push
-          fi
+  pubblicazione:
+    needs: compilazione
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Pubblicazione su Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

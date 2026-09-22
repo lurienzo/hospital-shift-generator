@@ -13,6 +13,7 @@ computer: tutto è salvato nel `localStorage`.
 - [Come si usa](#come-si-usa)
 - [Vincoli e generazione](#vincoli-e-generazione)
 - [Accesso all'applicazione](#accesso-allapplicazione)
+- [Pubblicazione](#pubblicazione)
 - [Sviluppo](#sviluppo)
 - [Struttura del codice](#struttura-del-codice)
 
@@ -274,14 +275,20 @@ accumularsi sulla stessa persona.
 
 ## Accesso all'applicazione
 
-L'applicazione puo chiedere una password all'apertura. Serve a impedire che chi
+L'applicazione può chiedere una password all'apertura. Serve a impedire che chi
 capita sull'indirizzo per caso si trovi davanti il pianificatore del reparto.
 
-**Non e una misura di sicurezza.** L'applicazione gira interamente nel browser,
-quindi tutto cio che serve a verificare la password viene scaricato insieme alla
+**Non è una misura di sicurezza.** L'applicazione gira interamente nel browser,
+quindi tutto ciò che serve a verificare la password viene scaricato insieme alla
 pagina: chi apre gli strumenti per sviluppatori la aggira. Per una protezione
 vera serve un controllo lato server, per esempio la protezione con password di
 Netlify o Cloudflare Access davanti al sito.
+
+Con il repository pubblico c'è un punto in più da tenere presente: l'impronta
+della password sta nel codice compilato, che chiunque può scaricare. Da lì una
+password corta o presente in un dizionario si ricava in pochi secondi, senza
+nemmeno passare dall'applicazione. Vale quindi la pena scegliere una frase
+lunga, non una parola con qualche cifra in coda.
 
 I turni non sono comunque esposti: restano nel `localStorage` del browser di chi
 li ha creati e non passano da nessun server. Chi apre l'indirizzo senza aver mai
@@ -308,9 +315,30 @@ repository, che il workflow di deploy legge in fase di compilazione:
 gh secret set VITE_APP_PASSWORD_SHA256 --body <impronta>
 ```
 
-Se la variabile non e impostata il blocco non si attiva e l'applicazione si apre
-senza chiedere nulla: e il comportamento voluto in sviluppo e nei test. Lo
+Se la variabile non è impostata il blocco non si attiva e l'applicazione si apre
+senza chiedere nulla: è il comportamento voluto in sviluppo e nei test. Lo
 sblocco vale per la sessione del browser.
+
+## Pubblicazione
+
+Il sito è pubblicato su GitHub Pages a ogni push su `master`, dal workflow
+`.github/workflows/deploy.yml`:
+
+<https://lurienzo.github.io/hospital-shift-generator/>
+
+Il workflow esegue i controlli, compila, e carica `dist` su Pages con le azioni
+ufficiali (`configure-pages`, `upload-pages-artifact`, `deploy-pages`). Pubblica
+solo sul Pages di questo repository: non ha token né accesso ad altri repo.
+
+Due cose da sapere se si riparte da zero su un altro account:
+
+- in *Settings → Pages* la voce **Source** deve essere **GitHub Actions**, non un
+  ramo. Il workflow prova ad attivarla da sé al primo giro (`enablement: true`),
+  ma se il repository è privato serve un piano a pagamento e la pubblicazione
+  non parte.
+- `base` in `vite.config.ts` deve combaciare col nome del repository, perché il
+  sito vive in una sottocartella. Se non combaciano la pagina esce bianca e in
+  console si vedono i file `assets/` in errore 404.
 
 ## Sviluppo
 
