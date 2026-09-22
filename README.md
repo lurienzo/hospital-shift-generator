@@ -96,26 +96,33 @@ selezionabili come passo di uno schema.
 
 ### Ore per medico
 
-In *Impostazioni* si può indicare quante ore ciascuno dovrebbe svolgere, con
-un minimo e un massimo per settimana o per mese (per esempio 36–42 ore
+In *Impostazioni* si indica quante ore ciascuno dovrebbe svolgere, con un
+minimo e un massimo per settimana o per mese (per esempio 36–42 ore
 settimanali).
 
-Le due soglie non pesano allo stesso modo:
+Il **minimo guida la distribuzione**: a parità di altri criteri viene servito
+prima chi è più lontano dalla soglia, ma nessuno viene costretto a lavorare più
+di quanto il servizio richieda.
 
-- il **massimo è un tetto**: il generatore non lo supera, anche a costo di
-  lasciare un turno scoperto;
-- il **minimo guida la distribuzione**: a parità di altri criteri viene servito
-  prima chi è più lontano dalla soglia, ma nessuno viene costretto a lavorare
-  più di quanto il servizio richieda.
+Per il **massimo** si scelgono due comportamenti.
+
+- **Si può superare e recuperare**, il predefinito, perché è come funziona un
+  reparto: una settimana si sfora e nelle vicine si sta sotto. Quello che viene
+  controllato è il **totale sui periodi completi**: con 36–42 ore su quattro
+  settimane il totale ammesso va da 144 a 168 ore, e una settimana da 48
+  compensata da tre da 36 rientra. I periodi sopra soglia che si recuperano
+  vengono elencati a parte nel calendario, senza contare come problema.
+- **Non si supera mai**, per i casi in cui il massimo è un limite invalicabile.
+  Il generatore lo rispetta anche a costo di lasciare un turno scoperto.
 
 Un medico può avere ore proprie, diverse da quelle del servizio, impostate
 nella sua scheda.
 
 Le settimane a cavallo di due mesi sono il punto delicato: guardate dal solo
 mese in corso sembrerebbero sempre sotto il minimo. Per questo vengono
-giudicate sul minimo solo quando il mese precedente è già salvato, mentre il
-superamento del massimo viene segnalato comunque, perché le ore dei giorni non
-visibili possono soltanto aggiungersi.
+giudicate sul minimo solo quando il mese precedente è già salvato, e per lo
+stesso motivo restano fuori dal bilancio complessivo, che si calcola sui soli
+periodi interamente noti.
 
 ### Preferenze dei medici
 
@@ -208,11 +215,14 @@ scoperti per rispettarli:
   libera.
 - **Preferenza** — un turno in un giorno o una fascia che il medico preferisce
   evitare.
-- **Oltre le ore** — un periodo in cui il medico supera il massimo di ore.
+- **Oltre le ore** — un periodo oltre il massimo, quando il massimo è
+  impostato come limite invalicabile. Col recupero attivo, al suo posto viene
+  segnalato il bilancio complessivo fuori intervallo.
 
 Gli scostamenti dalle ore richieste e dalla durata di turno preferita hanno un
-pannello dedicato nel calendario, *Ore e preferenze*, che indica per ciascuno
-il periodo e di quanto si discosta.
+pannello dedicato nel calendario, *Ore e preferenze*, diviso in tre parti: il
+bilancio complessivo fuori intervallo, i singoli periodi fuori intervallo, e i
+periodi sopra il massimo che si sono recuperati.
 
 ### Flag dei turni
 
@@ -254,8 +264,12 @@ Il generatore procede per priorità decrescente di rigidità:
    servizio, le preferenze del medico sul giorno, la distanza dal minimo di
    ore, la durata di turno preferita e infine l'equità del carico.
 
-Il massimo di ore e i divieti per giorno agiscono prima di tutto questo, come
-condizioni di ammissibilità: un medico che li violerebbe non viene considerato.
+I divieti per giorno agiscono prima di tutto questo, come condizione di
+ammissibilità: un medico che li violerebbe non viene considerato. Il massimo di
+ore fa lo stesso solo se impostato come limite invalicabile; col recupero
+attivo resta un criterio di preferenza, e fra chi ha già raggiunto il minimo
+viene scelto il meno carico, così le ore in eccesso si ripartiscono invece di
+accumularsi sulla stessa persona.
 
 ## Sviluppo
 

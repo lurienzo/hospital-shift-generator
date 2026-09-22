@@ -283,9 +283,9 @@ export function Settings({ hasUnsavedChanges }: SettingsProps) {
           <div>
             <h3>Schemi turni</h3>
             <p className="hint">
-              Sequenze standard di turni e riposi, es. pomeriggio → lunga → notte → smonto →
-              riposo. Si applicano a una sala per riempire la settimana, oppure come ciclo di
-              rotazione dei dottori.
+              Sequenze standard di giornate, es. pomeriggio → lunga → notte → smonto →
+              riposo. Descrivono come si succedono i turni di un dottore: uno schema si
+              attiva qui sotto come rotazione del servizio.
             </p>
           </div>
           <button

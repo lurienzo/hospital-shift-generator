@@ -1,4 +1,10 @@
-import { HOURS_PERIOD_LABELS, HoursPeriod, HoursTarget } from '../models/types';
+import {
+  HOURS_ENFORCEMENT_LABELS,
+  HOURS_PERIOD_LABELS,
+  HoursEnforcement,
+  HoursPeriod,
+  HoursTarget,
+} from '../models/types';
 import { useConfig } from '../state/configContext';
 import './HoursTargetEditor.css';
 
@@ -6,8 +12,10 @@ import './HoursTargetEditor.css';
  * Ore minime e massime che ogni medico dovrebbe svolgere.
  *
  * Il minimo orienta la scelta del generatore, che serve prima chi è sotto
- * soglia; il massimo è un tetto e non viene superato. Le eccezioni per singolo
- * medico si impostano nella sua scheda.
+ * soglia. Il massimo può essere un tetto invalicabile oppure una soglia
+ * recuperabile nei periodi vicini, che è il comportamento predefinito perché
+ * corrisponde a come funziona un reparto. Le eccezioni per singolo medico si
+ * impostano nella sua scheda.
  */
 export function HoursTargetEditor() {
   const { hoursTarget, setHoursTarget, doctors } = useConfig();
@@ -30,7 +38,7 @@ export function HoursTargetEditor() {
           <h3>Ore per medico</h3>
           <p className="hint">
             Quante ore ciascuno dovrebbe svolgere nel periodo indicato. Il minimo guida la
-            distribuzione, il massimo non viene superato.
+            distribuzione; per il massimo si sceglie se sia invalicabile o recuperabile.
           </p>
         </div>
       </div>
@@ -96,6 +104,41 @@ export function HoursTargetEditor() {
                 <span className="hours-unit">ore</span>
               </div>
             </div>
+          </div>
+
+          <div className="field">
+            <span className="label">Il massimo</span>
+            <div className="segmented">
+              {(Object.keys(HOURS_ENFORCEMENT_LABELS) as HoursEnforcement[]).map(mode => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={hoursTarget.enforcement === mode ? 'active' : ''}
+                  onClick={() => update({ enforcement: mode })}
+                >
+                  {HOURS_ENFORCEMENT_LABELS[mode]}
+                </button>
+              ))}
+            </div>
+            <p className="hint">
+              {hoursTarget.enforcement === 'balance' ? (
+                <>
+                  {hoursTarget.period === 'week'
+                    ? 'Una settimana può andare'
+                    : 'Un mese può andare'}{' '}
+                  oltre le {hoursTarget.max} ore, purché si recuperi nei periodi vicini:
+                  quello che viene controllato è il totale. Su quattro{' '}
+                  {hoursTarget.period === 'week' ? 'settimane complete' : 'mesi completi'} il
+                  totale ammesso va da {hoursTarget.min * 4} a {hoursTarget.max * 4} ore.
+                </>
+              ) : (
+                <>
+                  Le {hoursTarget.max} ore non vengono superate in{' '}
+                  {hoursTarget.period === 'week' ? 'nessuna settimana' : 'nessun mese'},
+                  anche a costo di lasciare un turno scoperto.
+                </>
+              )}
+            </p>
           </div>
 
           {invalid ? (

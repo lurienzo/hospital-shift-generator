@@ -223,6 +223,9 @@ export class StorageService {
       period: stored.period === 'month' ? 'month' : 'week',
       min: Number.isFinite(stored.min) ? Number(stored.min) : DEFAULT_HOURS_TARGET.min,
       max: Number.isFinite(stored.max) ? Number(stored.max) : DEFAULT_HOURS_TARGET.max,
+      // I dati salvati prima di questa impostazione non la contengono: il
+      // recupero fra periodi e il comportamento predefinito.
+      enforcement: stored.enforcement === 'cap' ? 'cap' : 'balance',
     };
   }
 

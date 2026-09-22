@@ -435,7 +435,8 @@ function collectOverloadedPeriods(report?: HoursReport): Map<string, DoctorPerio
   const result = new Map<string, DoctorPeriodHours>();
   if (!report) return result;
 
-  for (const entry of report.entries) {
+  // `issues` esclude già gli sforamenti che il recupero rende accettabili.
+  for (const entry of report.issues) {
     if (entry.status !== 'above') continue;
     result.set(`${entry.doctorId}|${entry.period.key}`, entry);
   }

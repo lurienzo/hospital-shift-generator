@@ -1,4 +1,4 @@
-import { Assignment, Doctor, HoursRange, HoursTarget } from '../models/types';
+import { Assignment, Doctor, HoursEnforcement, HoursRange, HoursTarget } from '../models/types';
 import { ShiftTypeIndex } from './shiftTypes';
 import {
   addDays,
@@ -13,12 +13,19 @@ import {
  * Verifica delle ore svolte da ciascun medico rispetto al minimo e al massimo
  * impostati per il servizio.
  *
- * Il punto delicato sono i periodi a cavallo del mese. Una settimana che
- * comincia il 30 marzo e finisce il 5 aprile, guardata dal solo mese di
- * aprile, sembra sempre sotto il minimo. Per questo ogni periodo sa se i suoi
- * giorni ricadono tutti nell'intervallo di dati disponibili: quando non è
- * così, il minimo non viene giudicato, mentre il massimo sì, perché ore che
- * non vediamo possono solo aumentare il totale.
+ * Due accortezze governano questo calcolo.
+ *
+ * I periodi a cavallo del mese. Una settimana che comincia il 30 marzo e
+ * finisce il 5 aprile, guardata dal solo mese di aprile, sembra sempre sotto
+ * il minimo. Ogni periodo sa quindi se i suoi giorni ricadono tutti
+ * nell'intervallo di dati disponibili: quando non e cosi il minimo non viene
+ * giudicato, perche le ore dei giorni non visibili possono solo aggiungersi.
+ *
+ * Il recupero fra periodi. Con il massimo impostato su "si puo superare", una
+ * settimana sopra soglia non e un problema se nelle vicine si sta sotto:
+ * quello che conta e il bilancio complessivo sui periodi completi, non il
+ * singolo periodo. Solo con il massimo impostato come tetto ogni sforamento
+ * viene segnalato per se stesso.
  */
 
 export interface HoursPeriodWindow {
@@ -33,6 +40,25 @@ export interface HoursPeriodWindow {
 
 export type HoursStatus = 'ok' | 'below' | 'above' | 'partial';
 
+/**
+ * Bilancio complessivo di un medico sui periodi completi del mese.
+ *
+ * `expected` e l'intervallo ammesso per il numero di periodi considerati:
+ * con 36-42 ore su quattro settimane complete va da 144 a 168 ore. Finche il
+ * totale resta dentro, gli sforamenti di una singola settimana si sono
+ * compensati con le altre.
+ */
+export interface DoctorHoursBalance {
+  doctorId: string;
+  hours: number;
+  /** Periodi completi considerati. */
+  periods: number;
+  expected: HoursRange;
+  /** Ore che mancano al minimo complessivo, o che ne superano il massimo. */
+  gap: number;
+  status: 'ok' | 'below' | 'above' | 'unknown';
+}
+
 export interface DoctorPeriodHours {
   doctorId: string;
   period: HoursPeriodWindow;
@@ -46,17 +72,29 @@ export interface HoursReport {
   target: HoursTarget;
   periods: HoursPeriodWindow[];
   entries: DoctorPeriodHours[];
-  /** Solo le voci che richiedono attenzione. */
+  /**
+   * Voci che richiedono attenzione. Con il recupero attivo i periodi sopra il
+   * massimo non compaiono qui: al loro posto conta il bilancio complessivo.
+   */
   issues: DoctorPeriodHours[];
+  /** Periodi sopra il massimo che rientrano grazie al recupero. */
+  compensated: DoctorPeriodHours[];
+  /** Bilancio complessivo per medico, quando ci sono periodi completi. */
+  balances: DoctorHoursBalance[];
+  /** Solo i bilanci fuori dall'intervallo complessivo. */
+  balanceIssues: DoctorHoursBalance[];
   /** Ore totali del mese per medico. */
   monthlyHours: Map<string, number>;
 }
 
 export const EMPTY_HOURS_REPORT: HoursReport = {
-  target: { enabled: false, period: 'week', min: 0, max: 0 },
+  target: { enabled: false, period: 'week', min: 0, max: 0, enforcement: 'balance' },
   periods: [],
   entries: [],
   issues: [],
+  compensated: [],
+  balances: [],
+  balanceIssues: [],
   monthlyHours: new Map(),
 };
 
@@ -162,13 +200,80 @@ export function buildHoursReport(options: {
     }
   }
 
+  const balances = buildBalances(entries, doctors, target);
+
+  // Con il recupero attivo lo sforamento di un periodo non e un problema in
+  // se: conta il bilancio complessivo, e il periodo viene mostrato a parte.
+  const recovering = target.enforcement === 'balance';
+  const issues = entries.filter(entry => (
+    entry.status === 'below' || (entry.status === 'above' && !recovering)
+  ));
+  const compensated = recovering
+    ? entries.filter(entry => entry.status === 'above')
+    : [];
+
   return {
     target,
     periods,
     entries,
-    issues: entries.filter(entry => entry.status === 'below' || entry.status === 'above'),
+    issues,
+    compensated,
+    balances,
+    balanceIssues: balances.filter(
+      balance => balance.status === 'below' || balance.status === 'above',
+    ),
     monthlyHours,
   };
+}
+
+/**
+ * Bilancio complessivo di ciascun medico sui soli periodi completi: i periodi
+ * parziali non si possono sommare senza falsare il confronto.
+ */
+function buildBalances(
+  entries: DoctorPeriodHours[],
+  doctors: Doctor[],
+  target: HoursTarget,
+): DoctorHoursBalance[] {
+  return doctors.map(doctor => {
+    const own = entries.filter(
+      entry => entry.doctorId === doctor.id && entry.period.complete,
+    );
+    const range = rangeFor(doctor, target);
+    const hours = own.reduce((sum, entry) => sum + entry.hours, 0);
+    const expected = { min: range.min * own.length, max: range.max * own.length };
+
+    if (own.length === 0) {
+      return {
+        doctorId: doctor.id, hours, periods: 0, expected, gap: 0, status: 'unknown' as const,
+      };
+    }
+
+    if (hours > expected.max) {
+      return {
+        doctorId: doctor.id,
+        hours,
+        periods: own.length,
+        expected,
+        gap: hours - expected.max,
+        status: 'above' as const,
+      };
+    }
+    if (hours < expected.min) {
+      return {
+        doctorId: doctor.id,
+        hours,
+        periods: own.length,
+        expected,
+        gap: expected.min - hours,
+        status: 'below' as const,
+      };
+    }
+
+    return {
+      doctorId: doctor.id, hours, periods: own.length, expected, gap: 0, status: 'ok' as const,
+    };
+  });
 }
 
 /** Ore richieste a un medico: le sue, se impostate, altrimenti quelle del servizio. */
@@ -212,6 +317,10 @@ export class HoursLedger {
     return this.target.enabled;
   }
 
+  get enforcement(): HoursEnforcement {
+    return this.target.enforcement;
+  }
+
   /** Chiave del periodo a cui appartiene una data. */
   periodKey(date: string): string {
     const cached = this.periodOf.get(date);
@@ -237,12 +346,37 @@ export class HoursLedger {
     return doctor ? rangeFor(doctor, this.target) : { min: this.target.min, max: this.target.max };
   }
 
-  /** Vero se aggiungere quel turno farebbe superare il massimo del periodo. */
+  /**
+   * Vero se il turno non e assegnabile perche sfonderebbe il massimo.
+   *
+   * Vale solo col massimo impostato come tetto: con il recupero attivo lo
+   * sforamento e ammesso, e resta un criterio di preferenza.
+   */
+  blocksForMax(doctorId: string, date: string, shiftTypeId: string): boolean {
+    if (!this.target.enabled || this.target.enforcement !== 'cap') return false;
+    return this.wouldExceedMax(doctorId, date, shiftTypeId);
+  }
+
+  /** Vero se aggiungere quel turno porterebbe il periodo oltre il massimo. */
   wouldExceedMax(doctorId: string, date: string, shiftTypeId: string): boolean {
     if (!this.target.enabled) return false;
     const range = this.rangeOf(doctorId);
     if (range.max <= 0) return false;
     return this.hoursIn(doctorId, date) + this.shiftTypes.hours(shiftTypeId) > range.max;
+  }
+
+  /**
+   * Quanto un medico e carico nel periodo, in rapporto al suo massimo.
+   *
+   * Serve come preferenza col recupero attivo: a parita di altri criteri si
+   * sceglie chi e piu lontano dalla propria soglia, cosi le ore in eccesso si
+   * distribuiscono invece di accumularsi sulla stessa persona.
+   */
+  loadRatio(doctorId: string, date: string): number {
+    if (!this.target.enabled) return 0;
+    const range = this.rangeOf(doctorId);
+    if (range.max <= 0) return 0;
+    return this.hoursIn(doctorId, date) / range.max;
   }
 
   /** Vero se il medico è ancora sotto il minimo del periodo. */

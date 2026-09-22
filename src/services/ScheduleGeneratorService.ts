@@ -120,7 +120,13 @@ const PENALTY = {
   againstLengthPreference: 2,
   // Ore fuori dall'intervallo richiesto, per ogni ora di scarto.
   hoursBelowMin: 3,
+  // Sforamento del massimo in un singolo periodo: pesante se il massimo è un
+  // tetto, leggero se è recuperabile nei periodi vicini.
   hoursAboveMax: 15,
+  hoursAboveMaxRecoverable: 1,
+  // Bilancio complessivo fuori dall'intervallo: è la misura che conta quando
+  // gli sforamenti si possono compensare.
+  hoursBalance: 8,
 } as const;
 
 export class ScheduleGeneratorService {
@@ -364,9 +370,20 @@ export class ScheduleGeneratorService {
     });
 
     let cost = 0;
+
+    // Gli sforamenti di singolo periodo pesano poco col recupero attivo: a
+    // contare è il bilancio complessivo, che non deve uscire dall'intervallo.
+    const perPeriodWeight = this.hoursTarget.enforcement === 'cap'
+      ? PENALTY.hoursAboveMax
+      : PENALTY.hoursAboveMaxRecoverable;
+
     for (const entry of report.entries) {
       if (entry.status === 'below') cost += entry.gap * PENALTY.hoursBelowMin;
-      else if (entry.status === 'above') cost += entry.gap * PENALTY.hoursAboveMax;
+      else if (entry.status === 'above') cost += entry.gap * perPeriodWeight;
+    }
+
+    for (const balance of report.balanceIssues) {
+      cost += balance.gap * PENALTY.hoursBalance;
     }
 
     return cost;
@@ -726,9 +743,9 @@ export class ScheduleGeneratorService {
     if (this.rules.forbids(doctor.id, requirement.weekday, requirement.shiftTypeId)) return false;
     if (this.availability.isBlocked(doctor.id, requirement.date, requirement.shiftTypeId)) return false;
 
-    // Il massimo di ore è un tetto: superarlo non è un compromesso
-    // accettabile, quindi vale come divieto.
-    if (ledger.hours.wouldExceedMax(doctor.id, requirement.date, requirement.shiftTypeId)) {
+    // Il massimo impedisce l'assegnazione solo quando è impostato come tetto
+    // invalicabile: col recupero attivo resta un criterio di preferenza.
+    if (ledger.hours.blocksForMax(doctor.id, requirement.date, requirement.shiftTypeId)) {
       return false;
     }
     if (ledger.isResting(doctor.id, requirement.date)) return false;
@@ -780,11 +797,17 @@ export class ScheduleGeneratorService {
       if (aAvoid !== bAvoid) return aAvoid - bAvoid;
 
       // Chi è sotto il minimo di ore del periodo ha la precedenza: è il modo
-      // di far convergere tutti verso l'intervallo richiesto.
+      // di far convergere tutti verso l'intervallo richiesto. Fra chi lo ha
+      // già raggiunto si preferisce il meno carico, così le ore in eccesso si
+      // distribuiscono invece di accumularsi sulla stessa persona.
       if (ledger.hours.enabled) {
         const aBelow = ledger.hours.isBelowMin(a.id, requirement.date) ? 0 : 1;
         const bBelow = ledger.hours.isBelowMin(b.id, requirement.date) ? 0 : 1;
         if (aBelow !== bBelow) return aBelow - bBelow;
+
+        const loadDifference = ledger.hours.loadRatio(a.id, requirement.date)
+          - ledger.hours.loadRatio(b.id, requirement.date);
+        if (Math.abs(loadDifference) > 0.001) return loadDifference;
       }
 
       // Il secondo giorno di riposo è una preferenza, non un divieto: si evita

@@ -158,9 +158,19 @@ export interface HoursRange {
   max: number;
 }
 
+/**
+ * Come si comporta il massimo di ore.
+ *
+ * `balance` riflette il funzionamento reale di un reparto: una settimana si
+ * sfora e nelle vicine si recupera, purche il totale resti nell'intervallo.
+ * `cap` serve dove il massimo e un limite invalicabile.
+ */
+export type HoursEnforcement = 'balance' | 'cap';
+
 export interface HoursTarget extends HoursRange {
   enabled: boolean;
   period: HoursPeriod;
+  enforcement: HoursEnforcement;
 }
 
 export const DEFAULT_HOURS_TARGET: HoursTarget = {
@@ -168,6 +178,12 @@ export const DEFAULT_HOURS_TARGET: HoursTarget = {
   period: 'week',
   min: 36,
   max: 42,
+  enforcement: 'balance',
+};
+
+export const HOURS_ENFORCEMENT_LABELS: Record<HoursEnforcement, string> = {
+  balance: 'Si puo superare e recuperare',
+  cap: 'Non si supera mai',
 };
 
 export const HOURS_PERIOD_LABELS: Record<HoursPeriod, string> = {

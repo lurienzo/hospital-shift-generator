@@ -160,6 +160,8 @@ export function MonthlyCalendar({
     return measureLengthPreference(schedule.assignments, doctors, shiftTypeIndex, lengthScale);
   }, [schedule, doctors, shiftTypeIndex, lengthScale]);
 
+  const hoursIssueCount = hours.issues.length + hours.balanceIssues.length;
+
   const report = useMemo(() => {
     if (!schedule) return null;
     return findViolations(schedule.assignments, {
@@ -491,11 +493,14 @@ export function MonthlyCalendar({
               <span className="label">Weekend per dottore</span>
             </div>
             {hoursTarget.enabled && (
-              <div className={`stat-card ${hours.issues.length > 0 ? 'tone-warning' : 'tone-accent'}`}>
-                <span className="value">{hours.issues.length}</span>
-                <span className="label">
-                  Ore fuori intervallo
-                </span>
+              <div
+                className={`stat-card ${hoursIssueCount > 0 ? 'tone-warning' : 'tone-accent'}`}
+                title={hoursTarget.enforcement === 'balance'
+                  ? 'Conta il bilancio complessivo: i periodi oltre il massimo che si recuperano non sono contati'
+                  : 'Periodi fuori dall\u2019intervallo di ore richiesto'}
+              >
+                <span className="value">{hoursIssueCount}</span>
+                <span className="label">Ore fuori intervallo</span>
               </div>
             )}
             {gaps.length > 0 && (
@@ -790,7 +795,8 @@ export function MonthlyCalendar({
           )}
 
           {/* ---------------- Ore e preferenze ---------------- */}
-          {(hours.issues.length > 0 || lengthPreference.size > 0) && (
+          {(hours.issues.length > 0 || hours.balanceIssues.length > 0
+            || hours.compensated.length > 0 || lengthPreference.size > 0) && (
             <section className="panel">
               <div className="panel-header">
                 <div>
@@ -802,10 +808,44 @@ export function MonthlyCalendar({
                 </div>
               </div>
 
+              {hours.balanceIssues.length > 0 && (
+                <div className="field">
+                  <span className="label">
+                    Bilancio complessivo fuori intervallo
+                  </span>
+                  <ul className="issue-list">
+                    {hours.balanceIssues.map(balance => {
+                      const doctor = doctors.find(candidate => candidate.id === balance.doctorId);
+                      if (!doctor) return null;
+                      return (
+                        <li key={balance.doctorId} className={`issue-row ${balance.status}`}>
+                          <span className="issue-who">
+                            <span className="dot" style={{ background: doctor.color }} />
+                            {doctor.name}
+                          </span>
+                          <span className="issue-when">
+                            {balance.periods}{' '}
+                            {hours.target.period === 'week'
+                              ? `settiman${balance.periods === 1 ? 'a' : 'e'}`
+                              : `mes${balance.periods === 1 ? 'e' : 'i'}`}
+                          </span>
+                          <span className="issue-value">{formatHours(balance.hours)}</span>
+                          <span className="issue-detail">
+                            {balance.status === 'below'
+                              ? `${formatHours(balance.gap)} sotto il totale minimo di ${formatHours(balance.expected.min)}`
+                              : `${formatHours(balance.gap)} oltre il totale massimo di ${formatHours(balance.expected.max)}`}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
               {hours.issues.length > 0 && (
                 <div className="field">
                   <span className="label">
-                    Ore fuori intervallo ({hours.target.min}–{hours.target.max} per{' '}
+                    Periodi fuori intervallo ({hours.target.min}–{hours.target.max} per{' '}
                     {hours.target.period === 'week' ? 'settimana' : 'mese'})
                   </span>
                   <ul className="issue-list">
@@ -827,6 +867,39 @@ export function MonthlyCalendar({
                             {entry.status === 'below'
                               ? `${formatHours(entry.gap)} sotto il minimo`
                               : `${formatHours(entry.gap)} oltre il massimo`}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {hours.compensated.length > 0 && (
+                <div className="field">
+                  <span className="label">Periodi oltre il massimo, recuperati</span>
+                  <ul className="issue-list">
+                    {hours.compensated.map(entry => {
+                      const doctor = doctors.find(candidate => candidate.id === entry.doctorId);
+                      if (!doctor) return null;
+                      const balance = hours.balances.find(
+                        candidate => candidate.doctorId === entry.doctorId,
+                      );
+                      return (
+                        <li
+                          key={`${entry.doctorId}-${entry.period.key}`}
+                          className={`issue-row ${balance?.status === 'ok' ? 'ok' : 'above'}`}
+                        >
+                          <span className="issue-who">
+                            <span className="dot" style={{ background: doctor.color }} />
+                            {doctor.name}
+                          </span>
+                          <span className="issue-when">{entry.period.label}</span>
+                          <span className="issue-value">{formatHours(entry.hours)}</span>
+                          <span className="issue-detail">
+                            {formatHours(entry.gap)} oltre il massimo
+                            {balance && balance.status === 'ok'
+                              && `, recuperate: totale ${formatHours(balance.hours)} su ${formatHours(balance.expected.min)}–${formatHours(balance.expected.max)}`}
                           </span>
                         </li>
                       );

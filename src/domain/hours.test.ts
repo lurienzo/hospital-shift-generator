@@ -3,12 +3,18 @@ import { HoursTarget } from '../models/types';
 import { ShiftTypeIndex } from './shiftTypes';
 import { HoursLedger, buildHoursPeriods, buildHoursReport, rangeFor } from './hours';
 import { LONG, MORNING, NIGHT, makeAssignment, makeDoctor } from './testFixtures';
+import { addDays } from '../utils/date';
 
 const shiftTypes = new ShiftTypeIndex([MORNING, NIGHT, LONG]);
 const doctors = [makeDoctor('rossi'), makeDoctor('bianchi')];
 
-const weekly: HoursTarget = { enabled: true, period: 'week', min: 36, max: 42 };
-const monthly: HoursTarget = { enabled: true, period: 'month', min: 140, max: 170 };
+const weekly: HoursTarget = { enabled: true, period: 'week', min: 36, max: 42, enforcement: 'cap' };
+const monthly: HoursTarget = {
+  enabled: true, period: 'month', min: 140, max: 170, enforcement: 'cap',
+};
+
+/** Stesso intervallo, ma con recupero fra periodi vicini. */
+const recovering: HoursTarget = { ...weekly, enforcement: 'balance' };
 
 /** Aprile 2026: il 1 è mercoledì, il 30 giovedì. */
 const APRIL = { year: 2026, month: 4 };
@@ -182,6 +188,118 @@ describe('verifica delle ore', () => {
   });
 });
 
+describe('recupero fra periodi', () => {
+  const known = { from: '2026-03-01', to: '2026-04-30' };
+
+  /** Riempie una settimana con turni da 12 ore a partire dal lunedi. */
+  function week(monday: string, count: number, doctorId = 'rossi') {
+    return Array.from({ length: count }, (_, index) => makeAssignment(
+      `${monday}-${index}`,
+      addDays(monday, index),
+      'sala1',
+      NIGHT.id,
+      doctorId,
+    ));
+  }
+
+  /**
+   * Quattro settimane complete: 48, 36, 36 e 36 ore.
+   * Totale 156, dentro l'intervallo complessivo 144-168.
+   */
+  const uneven = [
+    ...week('2026-03-30', 4),
+    ...week('2026-04-06', 3),
+    ...week('2026-04-13', 3),
+    ...week('2026-04-20', 3),
+  ];
+
+  it('col recupero non segnala la settimana sopra il massimo', () => {
+    const result = buildHoursReport({
+      ...APRIL, target: recovering, doctors, shiftTypes, assignments: uneven, known,
+    });
+
+    const over = result.entries.find(
+      entry => entry.doctorId === 'rossi' && entry.period.start === '2026-03-30',
+    )!;
+    expect(over.hours).toBe(48);
+    expect(over.status).toBe('above');
+
+    // Non e fra i problemi: compare fra i periodi recuperati.
+    expect(result.issues).not.toContain(over);
+    expect(result.compensated).toContain(over);
+  });
+
+  it('col recupero il bilancio complessivo resta in regola', () => {
+    const result = buildHoursReport({
+      ...APRIL, target: recovering, doctors, shiftTypes, assignments: uneven, known,
+    });
+
+    const balance = result.balances.find(entry => entry.doctorId === 'rossi')!;
+    expect(balance.periods).toBe(4);
+    expect(balance.hours).toBe(156);
+    expect(balance.expected).toEqual({ min: 144, max: 168 });
+    expect(balance.status).toBe('ok');
+    expect(result.balanceIssues).toHaveLength(1);
+    expect(result.balanceIssues[0].doctorId).toBe('bianchi');
+  });
+
+  it('col tetto la stessa settimana e un problema', () => {
+    const result = buildHoursReport({
+      ...APRIL, target: weekly, doctors, shiftTypes, assignments: uneven, known,
+    });
+
+    const over = result.issues.find(
+      entry => entry.doctorId === 'rossi' && entry.period.start === '2026-03-30',
+    )!;
+    expect(over.status).toBe('above');
+    expect(result.compensated).toHaveLength(0);
+  });
+
+  it('segnala il bilancio quando lo sforamento non viene recuperato', () => {
+    // Quattro settimane da 48 ore: nessun recupero, il totale sfonda.
+    const always = [
+      ...week('2026-03-30', 4),
+      ...week('2026-04-06', 4),
+      ...week('2026-04-13', 4),
+      ...week('2026-04-20', 4),
+    ];
+
+    const result = buildHoursReport({
+      ...APRIL, target: recovering, doctors, shiftTypes, assignments: always, known,
+    });
+
+    const balance = result.balanceIssues.find(entry => entry.doctorId === 'rossi')!;
+    expect(balance.hours).toBe(192);
+    expect(balance.status).toBe('above');
+    expect(balance.gap).toBe(24);
+  });
+
+  it('esclude dal bilancio i periodi incompleti', () => {
+    // Senza il mese precedente la settimana a cavallo non entra nel conto.
+    const result = buildHoursReport({
+      ...APRIL, target: recovering, doctors, shiftTypes,
+      assignments: uneven, known: APRIL_ONLY,
+    });
+
+    const balance = result.balances.find(entry => entry.doctorId === 'rossi')!;
+    // Restano le tre settimane interamente dentro aprile: 36 ore ciascuna.
+    expect(balance.periods).toBe(3);
+    expect(balance.hours).toBe(108);
+    expect(balance.expected).toEqual({ min: 108, max: 126 });
+    expect(balance.status).toBe('ok');
+  });
+
+  it('non calcola bilanci senza periodi completi', () => {
+    const singleWeek = { from: '2026-04-01', to: '2026-04-03' };
+    const result = buildHoursReport({
+      ...APRIL, target: recovering, doctors, shiftTypes, assignments: [], known: singleWeek,
+    });
+
+    expect(result.balances.every(balance => balance.status === 'unknown')).toBe(true);
+    expect(result.balanceIssues).toHaveLength(0);
+  });
+});
+
 describe('registro delle ore del generatore', () => {
   it('accumula le ore nel periodo della data', () => {
     const ledger = new HoursLedger(weekly, doctors, shiftTypes);
@@ -208,6 +326,33 @@ describe('registro delle ore del generatore', () => {
     expect(ledger.wouldExceedMax('rossi', '2026-04-09', MORNING.id)).toBe(false);
   });
 
+  it('blocca l\u2019assegnazione solo col massimo impostato come tetto', () => {
+    const capped = new HoursLedger(weekly, doctors, shiftTypes);
+    const recovered = new HoursLedger(recovering, doctors, shiftTypes);
+
+    for (const date of ['2026-04-06', '2026-04-07', '2026-04-08']) {
+      capped.add('rossi', date, NIGHT.id);
+      recovered.add('rossi', date, NIGHT.id);
+    }
+
+    expect(capped.blocksForMax('rossi', '2026-04-09', NIGHT.id)).toBe(true);
+    // Col recupero lo sforamento e ammesso: resta solo una preferenza.
+    expect(recovered.blocksForMax('rossi', '2026-04-09', NIGHT.id)).toBe(false);
+    expect(recovered.wouldExceedMax('rossi', '2026-04-09', NIGHT.id)).toBe(true);
+  });
+
+  it('misura quanto un medico e carico rispetto al suo massimo', () => {
+    const ledger = new HoursLedger(recovering, doctors, shiftTypes);
+    expect(ledger.loadRatio('rossi', '2026-04-06')).toBe(0);
+
+    // 42 ore su un massimo di 42: rapporto pieno.
+    for (const date of ['2026-04-06', '2026-04-07', '2026-04-08']) {
+      ledger.add('rossi', date, NIGHT.id);
+    }
+    ledger.add('rossi', '2026-04-09', MORNING.id);
+    expect(ledger.loadRatio('rossi', '2026-04-06')).toBeCloseTo(1);
+  });
+
   it('riconosce chi è ancora sotto il minimo', () => {
     const ledger = new HoursLedger(weekly, doctors, shiftTypes);
     expect(ledger.isBelowMin('rossi', '2026-04-06')).toBe(true);
@@ -225,6 +370,7 @@ describe('registro delle ore del generatore', () => {
     expect(ledger.enabled).toBe(false);
     expect(ledger.hoursIn('rossi', '2026-04-06')).toBe(0);
     expect(ledger.wouldExceedMax('rossi', '2026-04-06', NIGHT.id)).toBe(false);
+    expect(ledger.blocksForMax('rossi', '2026-04-06', NIGHT.id)).toBe(false);
     expect(ledger.isBelowMin('rossi', '2026-04-06')).toBe(false);
   });
 });

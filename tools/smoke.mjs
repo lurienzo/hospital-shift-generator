@@ -77,6 +77,13 @@ await page.getByLabel('Massimo').fill('48');
 await page.waitForTimeout(200);
 await shot('05-ore-richieste');
 
+// Il massimo resta recuperabile: la modalita a tetto si vede nell'altra scelta.
+await page.getByRole('button', { name: 'Non si supera mai' }).click();
+await page.waitForTimeout(150);
+await shot('05b-ore-tetto');
+await page.getByRole('button', { name: 'Si puo superare e recuperare' }).click();
+await page.waitForTimeout(150);
+
 // --- Sale ---
 console.log('6. sale operative');
 await tab('Sale operative');

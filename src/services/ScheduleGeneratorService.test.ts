@@ -523,7 +523,12 @@ describe('rotazione del servizio', () => {
 });
 
 describe('ore richieste per medico', () => {
-  const weekly: HoursTarget = { enabled: true, period: 'week', min: 0, max: 24 };
+    /** Tetto invalicabile a 24 ore per settimana. */
+  const cap: HoursTarget = {
+    enabled: true, period: 'week', min: 0, max: 24, enforcement: 'cap',
+  };
+  /** Stesso massimo, ma recuperabile nei periodi vicini. */
+  const recoverable: HoursTarget = { ...cap, enforcement: 'balance' };
 
   it('non supera il massimo di ore del periodo', async () => {
     // Notti da 12 ore ogni giorno: col tetto a 24 nessuno puo farne piu di due
@@ -532,14 +537,14 @@ describe('ore richieste per medico', () => {
     const { generator, doctors, shiftTypes } = run({
       rooms: [room],
       doctorIds: ['a', 'b', 'c', 'd', 'e', 'f'],
-      hoursTarget: weekly,
+      hoursTarget: cap,
     });
 
     const result = await generator.generate(30);
     const report = buildHoursReport({
       year: YEAR,
       month: MONTH,
-      target: weekly,
+      target: cap,
       doctors,
       shiftTypes,
       assignments: result.schedule.assignments,
@@ -555,7 +560,7 @@ describe('ore richieste per medico', () => {
     const { generator } = run({
       rooms: [room],
       doctorIds: ['a'],
-      hoursTarget: weekly,
+      hoursTarget: cap,
     });
 
     const result = await generator.generate(10);
@@ -563,6 +568,61 @@ describe('ore richieste per medico', () => {
     expect(result.coverageGaps).toBeGreaterThan(0);
     expect(result.schedule.assignments.length).toBeLessThanOrEqual(12);
   });
+
+  it('col recupero copre tutto anche sforando il massimo', async () => {
+    // Lo stesso caso del test precedente: un solo medico e turni da 12 ore
+    // ogni giorno. Col recupero attivo il massimo non blocca, quindi il mese
+    // resta coperto.
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, NIGHT.id));
+    const { generator } = run({
+      rooms: [room],
+      doctorIds: ['a'],
+      hoursTarget: recoverable,
+    });
+
+    const result = await generator.generate(10);
+    expect(result.coverageGaps).toBe(0);
+    expect(result.schedule.assignments).toHaveLength(30);
+  });
+
+  it('col recupero distribuisce le ore in eccesso invece di accumularle', async () => {
+    // Trenta notti da 12 ore fra tre medici sono 120 ore a testa: col tetto a
+    // 24 per settimana lo sforamento e inevitabile. Quello che conta e che si
+    // ripartisca, invece di gravare sempre sulla stessa persona.
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, NIGHT.id));
+    const { generator, doctors, shiftTypes } = run({
+      rooms: [room],
+      doctorIds: ['a', 'b', 'c'],
+      hoursTarget: recoverable,
+    });
+
+    const result = await generator.generate(30);
+
+    const totals = doctors.map(doctor => result.schedule.assignments.filter(
+      item => item.doctorId === doctor.id,
+    ).length);
+    expect(result.coverageGaps).toBe(0);
+    expect(Math.max(...totals) - Math.min(...totals)).toBeLessThanOrEqual(2);
+
+    // Lo sforamento e ripartito: nessuno accumula piu del doppio del minimo
+    // fra i colleghi in una singola settimana.
+    const report = buildHoursReport({
+      year: YEAR,
+      month: MONTH,
+      target: recoverable,
+      doctors,
+      shiftTypes,
+      assignments: result.schedule.assignments,
+      known: { from: '2026-04-01', to: '2026-04-30' },
+    });
+
+    for (const period of report.periods) {
+      const inPeriod = report.entries
+        .filter(entry => entry.period.key === period.key)
+        .map(entry => entry.hours);
+      expect(Math.max(...inPeriod) - Math.min(...inPeriod)).toBeLessThanOrEqual(12);
+    }
+  }, 20000);
 
   it('senza limite di ore copre tutto', async () => {
     const room = makeRoom('sala1', slotsOn(EVERY_DAY, NIGHT.id));
@@ -589,14 +649,14 @@ describe('ore richieste per medico', () => {
       shiftTypes,
       schemes: [],
       config: emptyConfig(),
-      hoursTarget: weekly,
+      hoursTarget: cap,
     });
 
     const result = await generator.generate(30);
     const report = buildHoursReport({
       year: YEAR,
       month: MONTH,
-      target: weekly,
+      target: cap,
       doctors,
       shiftTypes,
       assignments: result.schedule.assignments,
