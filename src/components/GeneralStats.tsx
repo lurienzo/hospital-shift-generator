@@ -3,6 +3,7 @@ import { StorageService } from '../services/StorageService';
 import { buildStatColumns, computeStats, standardDeviation } from '../domain/stats';
 import { RoomSlotIndex } from '../domain/validation';
 import { blockLabel } from '../domain/shiftTypes';
+import { measureAdherence } from '../domain/rotation';
 import { useConfig } from '../state/configContext';
 import { StatsTable } from './StatsTable';
 import { MONTH_NAMES, MONTH_NAMES_SHORT } from '../utils/date';
@@ -18,7 +19,7 @@ interface GeneralStatsProps {
  * lo stesso motore della vista mensile, così i due non possono discordare.
  */
 export function GeneralStats({ revision }: GeneralStatsProps) {
-  const { rooms, doctors, shiftTypes, shiftTypeIndex } = useConfig();
+  const { rooms, doctors, shiftTypes, shiftTypeIndex, rotationRule, rotationScheme } = useConfig();
   const [balanceMetric, setBalanceMetric] = useState<string>('shifts');
 
   const activeVersions = useMemo(
@@ -83,6 +84,20 @@ export function GeneralStats({ revision }: GeneralStatsProps) {
       deviation: standardDeviation(stats.map(stat => stat.totalShifts), averageShifts),
     };
   }, [stats]);
+
+  /**
+   * Aderenza alla rotazione del servizio, calcolata scorrendo i mesi in
+   * ordine: la posizione di ciascun medico dipende dai turni precedenti.
+   */
+  const adherence = useMemo(() => {
+    if (!rotationScheme) return null;
+
+    const ordered = [...versionsForYear]
+      .sort((a, b) => a.schedule.month - b.schedule.month)
+      .flatMap(version => version.schedule.assignments);
+
+    return measureAdherence(ordered, rotationScheme, rotationRule, shiftTypeIndex);
+  }, [rotationScheme, rotationRule, shiftTypeIndex, versionsForYear]);
 
   const metric = columns.find(column => column.key === balanceMetric) ?? columns[0];
 
@@ -197,6 +212,53 @@ export function GeneralStats({ revision }: GeneralStatsProps) {
               <span className="label">Mesi considerati</span>
             </div>
           </div>
+
+          {adherence && adherence.size > 0 && (
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h3>Aderenza alla rotazione</h3>
+                  <p className="hint">
+                    Quanto i turni assegnati seguono lo schema
+                    {' '}<strong>{rotationScheme?.name}</strong>. Gli scostamenti non sono
+                    errori: capitano quando la copertura richiede di uscire dal giro.
+                  </p>
+                </div>
+              </div>
+
+              <ul className="adherence-rows">
+                {[...adherence.entries()]
+                  .map(([doctorId, entry]) => ({
+                    doctor: doctors.find(candidate => candidate.id === doctorId),
+                    entry,
+                  }))
+                  .filter(row => row.doctor !== undefined)
+                  .sort((a, b) => b.entry.ratio - a.entry.ratio)
+                  .map(({ doctor, entry }) => (
+                    <li key={doctor!.id}>
+                      <span className="adherence-name">
+                        <span className="dot" style={{ background: doctor!.color }} />
+                        {doctor!.name}
+                      </span>
+                      <span className="adherence-bar">
+                        <span
+                          className="adherence-fill"
+                          style={{ width: `${Math.round(entry.ratio * 100)}%` }}
+                        />
+                      </span>
+                      <span className="adherence-value">
+                        {Math.round(entry.ratio * 100)}%
+                      </span>
+                      <span className="adherence-detail hint">
+                        {entry.inPattern} in rotazione
+                        {entry.offPattern > 0 && `, ${entry.offPattern} fuori`}
+                        {entry.shouldRest > 0 && `, ${entry.shouldRest} in giorni di riposo`}
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
 
           {shiftTypeIndex.rotational.length > 0 && (
             <section className="panel">

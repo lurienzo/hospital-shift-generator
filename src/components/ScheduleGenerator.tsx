@@ -34,7 +34,7 @@ const EMPTY_CONFIG = {
 };
 
 export function ScheduleGenerator({ onScheduleGenerated, preselected }: ScheduleGeneratorProps) {
-  const { rooms, doctors, shiftTypes, shiftTypeIndex, schemes } = useConfig();
+  const { rooms, doctors, shiftTypes, shiftTypeIndex, schemes, rotationRule, rotationScheme } = useConfig();
 
   const today = new Date();
   const [year, setYear] = useState(preselected?.year ?? today.getFullYear());
@@ -122,6 +122,7 @@ export function ScheduleGenerator({ onScheduleGenerated, preselected }: Schedule
       shiftTypes: shiftTypeIndex,
       schemes,
       config,
+      rotationRule,
       priorStats: useYearBalance ? priorYear?.stats : undefined,
       priorAssignments: previous?.schedule.assignments,
     });
@@ -349,6 +350,15 @@ export function ScheduleGenerator({ onScheduleGenerated, preselected }: Schedule
             <span><strong>{monthConfig.prefilledAssignments.length}</strong> pre-compilati</span>
           )}
         </div>
+
+        {rotationScheme && (
+          <p className="hint">
+            Rotazione del servizio attiva: <strong>{rotationScheme.name}</strong>
+            {rotationRule.strength === 'binding'
+              ? ' — vincolante nei giorni di smonto e riposo.'
+              : ' — seguita quando possibile.'}
+          </p>
+        )}
 
         <label className="checkbox">
           <input

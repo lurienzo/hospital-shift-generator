@@ -1,0 +1,33 @@
+.rotation-scheme-field {
+  min-width: 280px;
+}
+
+.rotation-sequence {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.rotation-sequence .hint {
+  font-weight: 400;
+}
+
+.rotation-coverage {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--r-sm);
+  font-size: 0.8125rem;
+}
+
+.rotation-coverage.ok {
+  background: var(--accent-soft);
+  color: #a7f3d0;
+}
+
+.rotation-coverage.tight {
+  background: var(--warning-soft);
+  color: #fcd34d;
+}

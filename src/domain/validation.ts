@@ -8,6 +8,7 @@ import {
   Weekday,
 } from '../models/types';
 import { ShiftTypeIndex } from './shiftTypes';
+import { RotationFit, RotationTracker } from './rotation';
 import { addDays, buildMonthDays, weekdayOfISODate } from '../utils/date';
 
 /**
@@ -182,7 +183,9 @@ export type ViolationCode =
   | 'restDay'
   | 'secondRestDay'
   | 'exclusiveDay'
-  | 'splitBlock';
+  | 'splitBlock'
+  | 'offPattern'
+  | 'restedOnDuty';
 
 export type Severity = 'error' | 'warning';
 
@@ -206,6 +209,8 @@ const SEVERITY: Record<ViolationCode, Severity> = {
   secondRestDay: 'warning',
   exclusiveDay: 'error',
   splitBlock: 'warning',
+  offPattern: 'warning',
+  restedOnDuty: 'warning',
 };
 
 export interface ViolationContext {
@@ -214,6 +219,11 @@ export interface ViolationContext {
   shiftTypes: ShiftTypeIndex;
   availability: AvailabilityRules;
   slotIndex?: RoomSlotIndex;
+  /**
+   * Rotazione del servizio, già avviata coi mesi precedenti. Se assente, gli
+   * scostamenti dalla rotazione non vengono valutati.
+   */
+  rotation?: RotationTracker;
 }
 
 export interface ViolationReport {
@@ -283,6 +293,20 @@ export function findViolations(
   const sameDay = groupBy(ordered, assignment => `${assignment.doctorId}|${assignment.date}`);
   const splitBlocks = findSplitBlocks(ordered, shiftTypes);
 
+  // La rotazione va valutata scorrendo le date in ordine, perché la posizione
+  // di ciascun medico dipende dal turno che ha svolto prima.
+  const rotation = context.rotation?.clone();
+  const rotationFits = new Map<string, RotationFit>();
+  if (rotation) {
+    for (const assignment of ordered) {
+      rotationFits.set(
+        assignment.id,
+        rotation.fit(assignment.doctorId, assignment.date, assignment.shiftTypeId),
+      );
+      rotation.record(assignment.doctorId, assignment.date, assignment.shiftTypeId);
+    }
+  }
+
   for (const assignment of ordered) {
     if (assignment.locked) continue;
 
@@ -343,6 +367,16 @@ export function findViolations(
         `${shiftType.name} è una fascia a rotazione: il blocco dovrebbe essere coperto da un solo medico`));
     }
 
+    const fit = rotationFits.get(assignment.id);
+    if (fit === 'shouldRest') {
+      found.push(violation(assignment, 'restedOnDuty', 'Fuori rotazione',
+        `La rotazione del servizio prevede un giorno non lavorativo per ${assignment.doctorName}`));
+    } else if (fit === 'offPattern') {
+      const expected = rotationExpectation(context.rotation, assignment, shiftTypes);
+      found.push(violation(assignment, 'offPattern', 'Fuori rotazione',
+        `La rotazione del servizio prevedeva ${expected} per ${assignment.doctorName}`));
+    }
+
     if (found.length === 0) continue;
 
     found.sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error'));
@@ -362,6 +396,17 @@ function violation(
   detail: string,
 ): Violation {
   return { assignmentId: assignment.id, code, severity: SEVERITY[code], label, detail };
+}
+
+/** Descrizione del passo che la rotazione si aspettava, per il messaggio. */
+function rotationExpectation(
+  rotation: RotationTracker | undefined,
+  assignment: Assignment,
+  shiftTypes: ShiftTypeIndex,
+): string {
+  const step = rotation?.expectedStep(assignment.doctorId, assignment.date);
+  if (!step) return 'un altro turno';
+  return step.kind === 'shift' ? shiftTypes.get(step.shiftTypeId).name : 'un giorno non lavorativo';
 }
 
 /**

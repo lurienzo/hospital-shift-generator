@@ -11,6 +11,7 @@ import {
   findViolations,
   primaryViolation,
 } from '../domain/validation';
+import { RotationTracker } from '../domain/rotation';
 import { useConfig } from '../state/configContext';
 import { ScheduleVersionManager } from './ScheduleVersionManager';
 import { StatsTable } from './StatsTable';
@@ -64,7 +65,7 @@ export function MonthlyCalendar({
   onDuplicateVersion,
   onVersionsChanged,
 }: MonthlyCalendarProps) {
-  const { rooms, doctors, shiftTypes, shiftTypeIndex } = useConfig();
+  const { rooms, doctors, shiftTypes, shiftTypeIndex, rotationRule, rotationScheme } = useConfig();
 
   const [view, setView] = useState<CalendarView>('rooms');
   const [selectedYear, setSelectedYear] = useState(schedule?.year ?? new Date().getFullYear());
@@ -99,6 +100,20 @@ export function MonthlyCalendar({
 
   const slotIndex = useMemo(() => new RoomSlotIndex(rooms), [rooms]);
 
+  // La rotazione riprende dal mese precedente, così i primi giorni non
+  // risultano fuori pattern solo perché manca il riferimento.
+  const rotation = useMemo(() => {
+    if (!rotationScheme || !schedule) return undefined;
+
+    const previous = schedule.month === 1
+      ? StorageService.getActiveVersion(schedule.year - 1, 12)
+      : StorageService.getActiveVersion(schedule.year, schedule.month - 1);
+
+    const tracker = new RotationTracker(rotationScheme, rotationRule, shiftTypeIndex);
+    tracker.seed(previous?.schedule.assignments ?? []);
+    return tracker;
+  }, [rotationScheme, rotationRule, shiftTypeIndex, schedule]);
+
   const report = useMemo(() => {
     if (!schedule) return null;
     return findViolations(schedule.assignments, {
@@ -107,8 +122,9 @@ export function MonthlyCalendar({
       shiftTypes: shiftTypeIndex,
       availability,
       slotIndex,
+      rotation,
     });
-  }, [schedule, rooms, doctors, shiftTypeIndex, availability, slotIndex]);
+  }, [schedule, rooms, doctors, shiftTypeIndex, availability, slotIndex, rotation]);
 
   const gaps = useMemo(() => {
     if (!schedule) return [];

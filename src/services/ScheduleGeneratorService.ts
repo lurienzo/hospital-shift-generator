@@ -5,13 +5,16 @@ import {
   DoctorStats,
   GenerationConfig,
   MonthlySchedule,
+  NO_ROTATION_RULE,
   OperativeRoom,
+  RotationRule,
   ShiftScheme,
   Weekday,
   getRotationMode,
 } from '../models/types';
 import { ShiftTypeIndex, blockIndexOf } from '../domain/shiftTypes';
-import { cycleStepFor, isSchemeUsable } from '../domain/schemes';
+import { isSchemeUsable } from '../domain/schemes';
+import { RotationFit, RotationTracker } from '../domain/rotation';
 import { computeStats } from '../domain/stats';
 import {
   AvailabilityRules,
@@ -22,7 +25,7 @@ import {
   findViolations,
   requirementKey,
 } from '../domain/validation';
-import { addDays, buildISODate, buildMonthDays, mondayFirstIndex } from '../utils/date';
+import { addDays, buildISODate, mondayFirstIndex } from '../utils/date';
 import { generateId } from '../utils/id';
 
 export interface GenerationProgress {
@@ -55,12 +58,14 @@ export interface GeneratorInput {
   shiftTypes: ShiftTypeIndex;
   schemes: ShiftScheme[];
   config: GenerationConfig;
+  /** Regola di rotazione del servizio, valida per tutte le sale. */
+  rotationRule?: RotationRule;
   /** Statistiche dei mesi precedenti, per bilanciare sull'anno. */
   priorStats?: DoctorStats[];
   /**
    * Assegnazioni del mese precedente. Servono ai blocchi a rotazione che
-   * scavalcano il cambio di mese: la settimana iniziata a fine mese resta
-   * dello stesso medico.
+   * scavalcano il cambio di mese e alla regola di rotazione, che riprende la
+   * posizione di ciascun medico da dove l'aveva lasciata.
    */
   priorAssignments?: Assignment[];
 }
@@ -88,6 +93,10 @@ const PENALTY = {
   // Un blocco di diurnismo pesa molto più di un turno singolo: lo squilibrio
   // fra chi ne fa due e chi nessuno va corretto con priorità.
   variancePerBlock: 6,
+  // Scostamenti dalla rotazione del servizio: pesano abbastanza da orientare
+  // la scelta fra tentativi, non tanto da valere più di un turno scoperto.
+  offPattern: 4,
+  restedOnDuty: 12,
 } as const;
 
 export class ScheduleGeneratorService {
@@ -95,23 +104,23 @@ export class ScheduleGeneratorService {
   private readonly doctors: Doctor[];
   private readonly doctorById: Map<string, Doctor>;
   private readonly shiftTypes: ShiftTypeIndex;
-  private readonly schemes: ShiftScheme[];
   private readonly config: GenerationConfig;
   private readonly availability: AvailabilityRules;
   private readonly slotIndex: RoomSlotIndex;
   private readonly priorStats: Map<string, DoctorStats>;
   private readonly requirements: SlotRequirement[];
   private readonly requirementsByKey: Map<string, SlotRequirement>;
-  private readonly monthDates: string[];
   /** Proprietario di un blocco a rotazione iniziato nel mese precedente. */
   private readonly inheritedBlockOwners: Map<string, string>;
+  private readonly rotationRule: RotationRule;
+  /** Rotazione già avviata col mese precedente, da clonare a ogni tentativo. */
+  private readonly rotationSeed: RotationTracker;
 
   constructor(input: GeneratorInput) {
     this.rooms = input.rooms;
     this.doctors = input.doctors;
     this.doctorById = new Map(input.doctors.map(doctor => [doctor.id, doctor]));
     this.shiftTypes = input.shiftTypes;
-    this.schemes = input.schemes;
     this.config = input.config;
     this.availability = new AvailabilityRules(input.config);
     this.slotIndex = new RoomSlotIndex(input.rooms);
@@ -128,8 +137,22 @@ export class ScheduleGeneratorService {
     this.requirementsByKey = new Map(
       this.requirements.map(requirement => [requirementKey(requirement), requirement]),
     );
-    this.monthDates = buildMonthDays(input.config.year, input.config.month).map(day => day.date);
     this.inheritedBlockOwners = collectBlockOwners(input.priorAssignments ?? [], input.shiftTypes);
+
+    this.rotationRule = input.rotationRule ?? NO_ROTATION_RULE;
+    const rotationScheme = input.schemes.find(
+      scheme => scheme.id === this.rotationRule.schemeId,
+    );
+    const usableScheme = rotationScheme
+      && rotationScheme.steps.length > 0
+      && isSchemeUsable(rotationScheme, input.shiftTypes)
+      ? rotationScheme
+      : null;
+
+    // La posizione nella rotazione riprende dal mese precedente, così il
+    // cambio di mese non azzera il giro.
+    this.rotationSeed = new RotationTracker(usableScheme, this.rotationRule, input.shiftTypes);
+    this.rotationSeed.seed(input.priorAssignments ?? []);
   }
 
   /**
@@ -197,11 +220,14 @@ export class ScheduleGeneratorService {
       slotIndex: this.slotIndex,
     });
     const gaps = findCoverageGaps(this.requirements, assignments).length;
+    const drift = this.rotationDrift(assignments);
 
     const score =
       gaps * PENALTY.coverageGap +
       report.errors.length * PENALTY.error +
       report.warnings.length * PENALTY.warning +
+      drift.offPattern * PENALTY.offPattern +
+      drift.shouldRest * PENALTY.restedOnDuty +
       this.fairnessCost(stats);
 
     return {
@@ -212,6 +238,33 @@ export class ScheduleGeneratorService {
       errors: report.errors.length,
       warnings: report.warnings.length,
     };
+  }
+
+  /**
+   * Quanto un calendario si discosta dalla rotazione del servizio: turni che
+   * non corrispondono al passo atteso, e turni assegnati in giornate che lo
+   * schema vorrebbe di riposo.
+   */
+  private rotationDrift(assignments: Assignment[]): { offPattern: number; shouldRest: number } {
+    if (!this.rotationSeed.isActive) return { offPattern: 0, shouldRest: 0 };
+
+    const tracker = this.rotationSeed.clone();
+    const ordered = [...assignments].sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return this.shiftTypes.compare(a.shiftTypeId, b.shiftTypeId);
+    });
+
+    let offPattern = 0;
+    let shouldRest = 0;
+
+    for (const assignment of ordered) {
+      const fit = tracker.fit(assignment.doctorId, assignment.date, assignment.shiftTypeId);
+      if (fit === 'offPattern') offPattern++;
+      else if (fit === 'shouldRest') shouldRest++;
+      tracker.record(assignment.doctorId, assignment.date, assignment.shiftTypeId);
+    }
+
+    return { offPattern, shouldRest };
   }
 
   /** Squilibrio del carico fra medici, mesi precedenti inclusi se richiesto. */
@@ -262,7 +315,9 @@ export class ScheduleGeneratorService {
 
   private assign(seed: number): Assignment[] {
     const random = createSeededRandom(seed);
-    const ledger = new DoctorLedger(this.doctors, this.priorStats);
+    // Ogni tentativo parte dalla stessa posizione di rotazione: il clone
+    // impedisce che un tentativo erediti gli spostamenti del precedente.
+    const ledger = new DoctorLedger(this.doctors, this.priorStats, this.rotationSeed.clone());
 
     const locked: Assignment[] = this.config.prefilledAssignments.map(assignment => ({
       ...assignment,
@@ -277,15 +332,10 @@ export class ScheduleGeneratorService {
       ledger.record(assignment, this.requirementFor(assignment));
     }
 
-    // I giorni di smonto e riposo dei cicli valgono per tutte le sale, quindi
-    // vengono registrati prima di qualsiasi assegnazione.
-    this.markCycleRestDays(ledger);
-
     // I blocchi a rotazione vengono prima di tutto: impegnano un medico per
     // più giorni consecutivi, e assegnarli a giochi fatti lascerebbe soltanto
     // gli scarti fra i turni già distribuiti.
     this.assignRotationalBlocks(assignments, covered, ledger, random);
-    this.assignCycles(assignments, covered, ledger, random);
     this.assignDayGroups(assignments, covered, ledger, random);
     this.assignConsecutiveBlocks(assignments, covered, ledger, random);
     this.assignRemaining(assignments, covered, ledger, random);
@@ -298,35 +348,6 @@ export class ScheduleGeneratorService {
 
   private requirementFor(assignment: Assignment): SlotRequirement | undefined {
     return this.requirementsByKey.get(requirementKey(assignment));
-  }
-
-  private schemeFor(room: OperativeRoom): ShiftScheme | null {
-    if (!room.cycle) return null;
-    const scheme = this.schemes.find(candidate => candidate.id === room.cycle!.schemeId);
-    if (!scheme || scheme.steps.length === 0) return null;
-    return isSchemeUsable(scheme, this.shiftTypes) ? scheme : null;
-  }
-
-  private cycleAnchor(room: OperativeRoom): string {
-    return room.cycle?.startDate || buildISODate(this.config.year, this.config.month, 1);
-  }
-
-  private markCycleRestDays(ledger: DoctorLedger): void {
-    for (const room of this.rooms) {
-      if (getRotationMode(room) !== 'cycle') continue;
-      const scheme = this.schemeFor(room);
-      if (!scheme) continue;
-
-      const anchor = this.cycleAnchor(room);
-      room.cycle!.doctorIds.forEach((doctorId, doctorIndex) => {
-        for (const date of this.monthDates) {
-          const current = cycleStepFor(
-            scheme, doctorIndex, room.cycle!.offsetStep, anchor, date,
-          );
-          if (current && current.step.kind !== 'shift') ledger.markOff(doctorId, date);
-        }
-      });
-    }
   }
 
   /**
@@ -360,7 +381,9 @@ export class ScheduleGeneratorService {
         block.sort(this.byChronology);
         const blockIndex = blockIndexOf(shiftType, block[0].date);
 
-        const doctor = this.pickDoctorForRotationalBlock(block, shiftType.id, blockIndex, ledger, random);
+        const doctor = this.pickDoctorForRotationalBlock(
+          block, shiftType.id, blockIndex, ledger, random,
+        );
         if (!doctor) continue;
 
         let assigned = 0;
@@ -415,6 +438,10 @@ export class ScheduleGeneratorService {
       const blocks = ledger.blocks(a.doctor.id, shiftTypeId) - ledger.blocks(b.doctor.id, shiftTypeId);
       if (blocks !== 0) return blocks;
 
+      const aFit = rotationRank(ledger.rotation.fit(a.doctor.id, block[0].date, shiftTypeId));
+      const bFit = rotationRank(ledger.rotation.fit(b.doctor.id, block[0].date, shiftTypeId));
+      if (aFit !== bFit) return aFit - bFit;
+
       if (a.eligible !== b.eligible) return b.eligible - a.eligible;
 
       const shifts = ledger.shifts(a.doctor.id) - ledger.shifts(b.doctor.id);
@@ -424,49 +451,6 @@ export class ScheduleGeneratorService {
     });
 
     return shortlist[0].doctor;
-  }
-
-  /** Rotazione ciclica: ogni medico segue la propria posizione nello schema. */
-  private assignCycles(
-    assignments: Assignment[],
-    covered: Set<string>,
-    ledger: DoctorLedger,
-    random: () => number,
-  ): void {
-    for (const room of this.rooms) {
-      if (getRotationMode(room) !== 'cycle') continue;
-      const scheme = this.schemeFor(room);
-      if (!scheme) continue;
-
-      const anchor = this.cycleAnchor(room);
-      const { doctorIds, offsetStep } = room.cycle!;
-
-      for (const date of this.monthDates) {
-        // L'ordine di scansione ruota con la data: senza questo, quando due
-        // medici cadono sullo stesso passo sarebbe sempre il primo
-        // dell'elenco a prendersi il turno.
-        const order = rotate(
-          doctorIds.map((_, index) => index),
-          Math.floor(random() * Math.max(1, doctorIds.length)),
-        );
-
-        for (const doctorIndex of order) {
-          const current = cycleStepFor(scheme, doctorIndex, offsetStep, anchor, date);
-          if (!current || current.step.kind !== 'shift') continue;
-
-          const requirement = this.requirementsByKey.get(
-            requirementKey({ date, roomId: room.id, shiftTypeId: current.step.shiftTypeId }),
-          );
-          if (!requirement || covered.has(requirementKey(requirement))) continue;
-
-          const doctor = this.doctorById.get(doctorIds[doctorIndex]);
-          if (!doctor) continue;
-          if (!this.isEligible(doctor, requirement, ledger, { ignoreOffDay: true })) continue;
-
-          this.commit(doctor, requirement, assignments, covered, ledger);
-        }
-      }
-    }
   }
 
   /** Gruppi di giorni: lo stesso medico copre tutti i giorni del gruppo. */
@@ -644,6 +628,13 @@ export class ScheduleGeneratorService {
       return false;
     }
 
+    // Con la regola di rotazione vincolante, i giorni di smonto e riposo
+    // previsti dallo schema non sono assegnabili.
+    if (this.rotationRule.strength === 'binding') {
+      const fit = ledger.rotation.fit(doctor.id, requirement.date, requirement.shiftTypeId);
+      if (fit === 'shouldRest') return false;
+    }
+
     return true;
   }
 
@@ -658,6 +649,13 @@ export class ScheduleGeneratorService {
     const tiebreak = new Map(eligible.map(doctor => [doctor.id, random()]));
 
     return [...eligible].sort((a, b) => {
+      // La rotazione del servizio viene prima delle altre preferenze: è il
+      // criterio che il reparto vuole vedere rispettato, e seguirlo rende
+      // già uniforme il carico, perché tutti percorrono la stessa sequenza.
+      const aFit = rotationRank(ledger.rotation.fit(a.id, requirement.date, requirement.shiftTypeId));
+      const bFit = rotationRank(ledger.rotation.fit(b.id, requirement.date, requirement.shiftTypeId));
+      if (aFit !== bFit) return aFit - bFit;
+
       // Il secondo giorno di riposo è una preferenza, non un divieto: si evita
       // quando c'è alternativa, ma non lascia il turno scoperto.
       const aRest = ledger.isOnSecondRest(a.id, requirement.date) ? 1 : 0;
@@ -791,7 +789,11 @@ class DoctorLedger {
   private readonly offDays = new Set<string>();
   private readonly countedBlocks = new Set<string>();
 
-  constructor(doctors: Doctor[], priorStats: Map<string, DoctorStats>) {
+  constructor(
+    doctors: Doctor[],
+    priorStats: Map<string, DoctorStats>,
+    readonly rotation: RotationTracker,
+  ) {
     for (const doctor of doctors) {
       const prior = priorStats.get(doctor.id);
       this.shiftCount.set(doctor.id, prior?.totalShifts ?? 0);
@@ -821,6 +823,7 @@ class DoctorLedger {
     bump(this.shiftTypeCount, `${doctorId}|${assignment.shiftTypeId}`);
     this.busySlots.add(`${doctorId}|${date}|${assignment.shiftTypeId}`);
     this.roomsPerDay.add(`${doctorId}|${date}|${assignment.roomId}`);
+    this.rotation.record(doctorId, date, assignment.shiftTypeId);
 
     if (!requirement) return;
 
@@ -866,6 +869,20 @@ class DoctorLedger {
 // ---------------------------------------------------------------------------
 // Utilità
 // ---------------------------------------------------------------------------
+
+/**
+ * Ordine di preferenza rispetto alla rotazione. I medici senza riferimento
+ * nello schema restano in mezzo: la regola non ha ancora nulla da dire su di
+ * loro, e metterli in coda impedirebbe alla rotazione di avviarsi.
+ */
+function rotationRank(fit: RotationFit): number {
+  switch (fit) {
+    case 'inPattern': return 0;
+    case 'unknown': return 1;
+    case 'offPattern': return 2;
+    case 'shouldRest': return 3;
+  }
+}
 
 function bump(counter: Map<string, number>, key: string): void {
   counter.set(key, (counter.get(key) ?? 0) + 1);
@@ -938,12 +955,6 @@ function splitByWeekday(requirements: SlotRequirement[], weekday: Weekday): Slot
 
   if (current.length > 0) blocks.push(current);
   return blocks;
-}
-
-function rotate<T>(items: T[], offset: number): T[] {
-  if (items.length === 0) return items;
-  const shift = ((offset % items.length) + items.length) % items.length;
-  return [...items.slice(shift), ...items.slice(0, shift)];
 }
 
 /**

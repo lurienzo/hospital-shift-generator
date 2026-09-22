@@ -97,18 +97,7 @@ export interface DayGroup {
   days: Weekday[];
 }
 
-/** Rotazione ciclica: ogni medico avanza di un passo dello schema ogni giorno. */
-export interface RoomCycle {
-  schemeId: string;
-  /** Data ISO a cui corrisponde il passo 0 dello schema. Vuoto = 1° del mese. */
-  startDate: string;
-  /** Medici partecipanti, nell'ordine di ingresso nel ciclo. */
-  doctorIds: string[];
-  /** Sfasamento fra un medico e il successivo, in passi. */
-  offsetStep: number;
-}
-
-export type RotationMode = 'none' | 'consecutive' | 'dayGroups' | 'cycle';
+export type RotationMode = 'none' | 'consecutive' | 'dayGroups';
 
 export interface OperativeRoom {
   id: string;
@@ -120,11 +109,9 @@ export interface OperativeRoom {
   consecutiveShifts?: number;
   /** Giorno di inizio blocco quando i turni consecutivi coprono la settimana. */
   consecutiveStartDay?: Weekday;
-  cycle?: RoomCycle;
 }
 
 export function getRotationMode(room: OperativeRoom): RotationMode {
-  if (room.cycle && room.cycle.doctorIds.length > 0) return 'cycle';
   if (room.dayGroups.length > 0) return 'dayGroups';
   if (room.consecutiveShifts && room.consecutiveShifts > 0) return 'consecutive';
   return 'none';
@@ -132,6 +119,11 @@ export function getRotationMode(room: OperativeRoom): RotationMode {
 
 // ---------------------------------------------------------------------------
 // Schemi turni standardizzati (es. Pomeriggio → Lunga → Notte → Smonto → Riposo)
+//
+// Uno schema descrive la successione di giornate che un medico dovrebbe
+// seguire. Non è legato a una sala né a un giorno della settimana: vale per
+// tutto il servizio, e qualunque sala può fornire il turno che il passo
+// richiede.
 // ---------------------------------------------------------------------------
 
 export type SchemeStep =
@@ -150,6 +142,34 @@ export interface ShiftScheme {
 export const OFF_STEP_LABELS: Record<'smonto' | 'riposo', string> = {
   smonto: 'Smonto',
   riposo: 'Riposo',
+};
+
+/**
+ * Regola di rotazione del servizio: lo schema che i medici cercano di
+ * seguire, indipendentemente dalla sala che fornisce il turno.
+ *
+ * La posizione di un medico nello schema non deriva da una data fissa ma dal
+ * turno che ha svolto più recentemente: se ieri ha fatto notte, oggi il passo
+ * atteso è lo smonto. Così la rotazione si riallinea da sola e non serve
+ * ancorarla a un giorno della settimana.
+ */
+export interface RotationRule {
+  /** Schema da seguire. Stringa vuota = nessuna regola attiva. */
+  schemeId: string;
+  /** Medici a cui si applica. Elenco vuoto = tutti. */
+  doctorIds: string[];
+  /**
+   * `preference`: il generatore segue la rotazione quando può, senza lasciare
+   * turni scoperti per rispettarla.
+   * `binding`: nei giorni di smonto e riposo previsti non assegna nulla.
+   */
+  strength: 'preference' | 'binding';
+}
+
+export const NO_ROTATION_RULE: RotationRule = {
+  schemeId: '',
+  doctorIds: [],
+  strength: 'preference',
 };
 
 // ---------------------------------------------------------------------------

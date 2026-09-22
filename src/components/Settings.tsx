@@ -20,6 +20,7 @@ import {
 import { useConfig } from '../state/configContext';
 import { SchemeEditor } from './SchemeEditor';
 import { ServiceManager } from './ServiceManager';
+import { RotationRuleEditor } from './RotationRuleEditor';
 import { generateId } from '../utils/id';
 import './Settings.css';
 
@@ -44,7 +45,10 @@ interface SettingsProps {
 }
 
 export function Settings({ hasUnsavedChanges }: SettingsProps) {
-  const { shiftTypes, setShiftTypes, rooms, schemes, customSchemes, setCustomSchemes, shiftTypeIndex } = useConfig();
+  const {
+    shiftTypes, setShiftTypes, rooms, schemes, customSchemes, setCustomSchemes,
+    shiftTypeIndex, rotationRule, setRotationRule,
+  } = useConfig();
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -158,13 +162,15 @@ export function Settings({ hasUnsavedChanges }: SettingsProps) {
   };
 
   const removeScheme = (scheme: ShiftScheme) => {
-    const usedBy = rooms.filter(room => room.cycle?.schemeId === scheme.id).map(room => room.name);
-    const message = usedBy.length > 0
-      ? `Eliminare lo schema "${scheme.name}"?\n\nÈ usato come ciclo di rotazione in: ${usedBy.join(', ')}.`
+    const isActiveRotation = rotationRule.schemeId === scheme.id;
+    const message = isActiveRotation
+      ? `Eliminare lo schema "${scheme.name}"?\n\nÈ la rotazione attiva del servizio, che resterà senza schema.`
       : `Eliminare lo schema "${scheme.name}"?`;
 
     if (!window.confirm(message)) return;
+
     setCustomSchemes(customSchemes.filter(other => other.id !== scheme.id));
+    if (isActiveRotation) setRotationRule({ ...rotationRule, schemeId: '' });
   };
 
   return (
@@ -348,6 +354,8 @@ export function Settings({ hasUnsavedChanges }: SettingsProps) {
           ))}
         </ul>
       </section>
+
+      <RotationRuleEditor />
 
       {editingScheme && (
         <SchemeEditor

@@ -68,10 +68,11 @@ describe('avvio a vuoto', () => {
       await openTab(user, label);
     }
 
-    // Nelle impostazioni compaiono servizi, fasce orarie e schemi.
+    // Nelle impostazioni compaiono servizi, fasce, schemi e rotazione.
     expect(screen.getByRole('heading', { name: /^servizi$/i })).toBeTruthy();
     expect(screen.getByRole('heading', { name: /fasce orarie/i })).toBeTruthy();
     expect(screen.getByRole('heading', { name: /schemi turni/i })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /rotazione del servizio/i })).toBeTruthy();
   });
 });
 
@@ -203,6 +204,45 @@ describe('servizi separati', () => {
 
     expect(StorageService.loadDoctors()).toHaveLength(2);
     expect(StorageService.loadRooms()).toHaveLength(1);
+  });
+});
+
+describe('rotazione del servizio', () => {
+  it('attiva uno schema come regola del servizio, senza legarlo a una sala', async () => {
+    const user = userEvent.setup();
+    StorageService.saveDoctors([makeDoctor('a', { name: 'Rossi' })]);
+    renderApp();
+
+    await openTab(user, /^impostazioni$/i);
+
+    // Lo schema predefinito Mattina-Pomeriggio-Notte-Smonto-Riposo è
+    // selezionabile perché cita solo fasce esistenti.
+    const select = screen.getByLabelText(/schema da seguire/i);
+    await user.selectOptions(select, 'builtin-m-p-n-s-r');
+
+    expect(StorageService.loadRotationRule().schemeId).toBe('builtin-m-p-n-s-r');
+    expect(StorageService.loadRotationRule().strength).toBe('preference');
+
+    // La sequenza viene mostrata, senza chiedere un giorno di partenza.
+    expect(screen.getByText(/Mattina → Pomeriggio → Notte → Smonto → Riposo/)).toBeTruthy();
+    expect(screen.queryByLabelText(/inizia da/i)).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /^vincolante$/i }));
+    expect(StorageService.loadRotationRule().strength).toBe('binding');
+  });
+
+  it('non offre più il ciclo fra le rotazioni della sala', async () => {
+    const user = userEvent.setup();
+    StorageService.saveRooms([makeRoom('sala1', slotsOn(EVERY_DAY, MORNING.id))]);
+    renderApp();
+
+    await openTab(user, /^sale operative/i);
+    await user.click(screen.getByRole('button', { name: /^configura$/i }));
+
+    expect(screen.getByRole('button', { name: /turni consecutivi/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /gruppi di giorni/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /ciclo turni/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /applica schema/i })).toBeNull();
   });
 });
 

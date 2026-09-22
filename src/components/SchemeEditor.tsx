@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
-import { SchemeStep, ShiftScheme, ShiftType, WEEKDAYS, WEEKDAY_SHORT_LABELS } from '../models/types';
-import { ShiftTypeIndex } from '../domain/shiftTypes';
-import { buildSchemeSlots } from '../domain/schemes';
+import { SchemeStep, ShiftScheme, ShiftType } from '../models/types';
+import { ShiftTypeIndex, blockLabel, crossesMidnight, isRotational } from '../domain/shiftTypes';
 import { Modal } from './ui/Modal';
 import './SchemeEditor.css';
 
@@ -22,11 +21,12 @@ export function SchemeEditor({ scheme, shiftTypes, onSave, onClose }: SchemeEdit
 
   const index = useMemo(() => new ShiftTypeIndex(shiftTypes), [shiftTypes]);
 
-  // Anteprima della settimana risultante, per far vedere subito quali flag di
-  // riposo lo schema produce.
-  const preview = useMemo(
-    () => buildSchemeSlots({ ...scheme, name, steps }, 'monday', index),
-    [scheme, name, steps, index],
+  // Le fasce a blocchi non sono passi di un giro giornaliero: impegnano un
+  // medico per una settimana intera, e mescolarle allo schema produrrebbe
+  // istruzioni contraddittorie.
+  const selectable = useMemo(
+    () => index.all.filter(shiftType => !isRotational(shiftType)),
+    [index],
   );
 
   const addStep = (step: SchemeStep) => setSteps(current => [...current, step]);
@@ -133,7 +133,7 @@ export function SchemeEditor({ scheme, shiftTypes, onSave, onClose }: SchemeEdit
         <div className="field">
           <span className="label">Aggiungi un passo</span>
           <div className="row-wrap">
-            {index.all.map(shiftType => (
+            {selectable.map(shiftType => (
               <button
                 key={shiftType.id}
                 type="button"
@@ -154,33 +154,54 @@ export function SchemeEditor({ scheme, shiftTypes, onSave, onClose }: SchemeEdit
           </div>
           <p className="hint">
             Smonto e riposo non sono turni da coprire: indicano i giorni in cui il dottore non
-            lavora. Un turno seguito da uno smonto rende automaticamente smontante il giorno
-            successivo.
+            lavora.
           </p>
+          {index.rotational.length > 0 && (
+            <p className="hint">
+              {index.rotational.map(shiftType => shiftType.name).join(', ')}{' '}
+              {index.rotational.length === 1 ? 'non compare' : 'non compaiono'} fra i passi: le
+              fasce a rotazione si assegnano a blocchi interi
+              {index.rotational.length === 1 && ` (1 ${blockLabel(index.rotational[0])})`}, quindi
+              non possono essere il turno di una singola giornata del giro.
+            </p>
+          )}
         </div>
 
         {steps.length > 0 && (
           <div className="field">
-            <span className="label">Anteprima settimana (partendo da lunedì)</span>
-            <div className="scheme-preview">
-              {WEEKDAYS.map((weekday, position) => {
-                const step = steps[position % steps.length];
-                const slot = preview.find(candidate => candidate.weekday === weekday);
+            <span className="label">Come scorre il giro</span>
+            <ol className="cycle-run">
+              {steps.map((step, position) => {
+                const next = steps[(position + 1) % steps.length];
+                const afterNext = steps[(position + 2) % steps.length];
+                const shiftType = step.kind === 'shift'
+                  ? index.get(step.shiftTypeId)
+                  : null;
+                const overnight = shiftType !== null && crossesMidnight(shiftType);
+
                 return (
-                  <div key={weekday} className={`preview-day ${step.kind !== 'shift' ? 'off' : ''}`}>
-                    <span className="preview-weekday">{WEEKDAY_SHORT_LABELS[weekday]}</span>
-                    <span className="preview-step">{describe(step)}</span>
-                    {slot && (
-                      <span className="preview-flags">
-                        {slot.requiresNextDayRest && <span title="Il giorno dopo è smontante">smont.</span>}
-                        {slot.requiresSecondDayRest && <span title="Anche il secondo giorno è di riposo">+rip.</span>}
-                        {slot.isFullDayExclusive && <span title="Nessun altro turno nella giornata">escl.</span>}
+                  <li key={position} className={step.kind !== 'shift' ? 'off' : ''}>
+                    <span className="run-day">Giorno {position + 1}</span>
+                    <span className="run-step">{describe(step)}</span>
+                    {step.kind === 'shift' && (
+                      <span className="run-consequence">
+                        {next.kind === 'smonto'
+                          ? afterNext.kind === 'riposo'
+                            ? 'seguito da smonto e riposo'
+                            : 'seguito da smonto'
+                          : overnight
+                            ? 'scavalca la mezzanotte: smontante'
+                            : `poi ${describe(next).toLowerCase()}`}
                       </span>
                     )}
-                  </div>
+                  </li>
                 );
               })}
-            </div>
+            </ol>
+            <p className="hint">
+              Il giro riparte dal primo giorno. Non c’è un giorno della settimana di
+              partenza: ogni medico entra nel giro dal punto in cui si trova.
+            </p>
           </div>
         )}
       </div>

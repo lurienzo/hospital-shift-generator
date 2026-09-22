@@ -4,11 +4,13 @@ import {
   DoctorStats,
   GenerationConfig,
   OperativeRoom,
+  RotationRule,
   ShiftScheme,
   ShiftType,
 } from '../models/types';
 import { ShiftTypeIndex, blockIndexOf } from '../domain/shiftTypes';
 import { computeStats } from '../domain/stats';
+import { measureAdherence } from '../domain/rotation';
 import { AvailabilityRules, RoomSlotIndex, findViolations } from '../domain/validation';
 import {
   AFTERNOON,
@@ -23,6 +25,7 @@ import {
   makeSlot,
   slotsOn,
 } from '../domain/testFixtures';
+import { addDays } from '../utils/date';
 import { ScheduleGeneratorService } from './ScheduleGeneratorService';
 
 const YEAR = 2026;
@@ -46,6 +49,7 @@ function run(options: {
   doctorIds: string[];
   shiftTypes?: ShiftType[];
   schemes?: ShiftScheme[];
+  rotationRule?: RotationRule;
   config?: Partial<GenerationConfig>;
   priorStats?: DoctorStats[];
   priorAssignments?: Assignment[];
@@ -61,6 +65,7 @@ function run(options: {
     doctors,
     shiftTypes,
     schemes: options.schemes ?? [],
+    rotationRule: options.rotationRule,
     config: emptyConfig(options.config),
     priorStats: options.priorStats,
     priorAssignments: options.priorAssignments,
@@ -353,46 +358,160 @@ describe('rotazioni della sala', () => {
     expect(new Set(week.map(item => item.doctorId)).size).toBe(1);
   });
 
-  it('con il ciclo turni segue lo schema e salta i giorni di riposo', async () => {
-    const scheme: ShiftScheme = {
-      id: 's1',
-      name: 'Mattina · Pomeriggio · Smonto · Riposo',
-      steps: [
-        { kind: 'shift', shiftTypeId: MORNING.id },
-        { kind: 'shift', shiftTypeId: AFTERNOON.id },
-        { kind: 'smonto' },
-        { kind: 'riposo' },
-      ],
-    };
+  it('mantiene la continuità di ciascuna sala in modo indipendente', async () => {
+    // Due sale con blocchi di lunghezza diversa: nessuna impone all'altra la
+    // propria continuità.
+    const rooms = [
+      makeRoom('sala1', slotsOn(EVERY_DAY, MORNING.id), { consecutiveShifts: 3 }),
+      makeRoom('sala2', slotsOn(EVERY_DAY, AFTERNOON.id), { consecutiveShifts: 2 }),
+    ];
+    const { generator } = run({ rooms, doctorIds: ['a', 'b', 'c', 'd'] });
 
-    const room = makeRoom(
-      'sala1',
-      [...slotsOn(EVERY_DAY, MORNING.id), ...slotsOn(EVERY_DAY, AFTERNOON.id)],
-      {
-        cycle: {
-          schemeId: 's1',
-          startDate: '2026-04-01',
-          doctorIds: ['a', 'b', 'c', 'd'],
-          offsetStep: 1,
-        },
-      },
-    );
+    const result = await generator.generate(10);
+    expect(result.coverageGaps).toBe(0);
+
+    const firstBlock = result.schedule.assignments
+      .filter(item => item.roomId === 'sala1')
+      .sort((x, y) => x.date.localeCompare(y.date))
+      .slice(0, 3);
+    expect(new Set(firstBlock.map(item => item.doctorId)).size).toBe(1);
+  });
+});
+
+describe('rotazione del servizio', () => {
+  /** Pomeriggio → Notte → Smonto → Riposo. */
+  const scheme: ShiftScheme = {
+    id: 'rot',
+    name: 'Pomeriggio · Notte · Smonto · Riposo',
+    steps: [
+      { kind: 'shift', shiftTypeId: AFTERNOON.id },
+      { kind: 'shift', shiftTypeId: NIGHT.id },
+      { kind: 'smonto' },
+      { kind: 'riposo' },
+    ],
+  };
+
+  const rule: RotationRule = { schemeId: 'rot', doctorIds: [], strength: 'preference' };
+
+  /** Le due fasce stanno in sale diverse: la rotazione le attraversa entrambe. */
+  const twoRooms = () => [
+    makeRoom('pomeriggi', slotsOn(EVERY_DAY, AFTERNOON.id)),
+    makeRoom('notti', slotsOn(EVERY_DAY, NIGHT.id)),
+  ];
+
+  it('fa proseguire il giro attraverso sale diverse', async () => {
+    const { generator } = run({
+      rooms: twoRooms(),
+      doctorIds: ['a', 'b', 'c', 'd'],
+      schemes: [scheme],
+      rotationRule: rule,
+    });
+
+    const result = await generator.generate(40);
+    expect(result.coverageGaps).toBe(0);
+
+    // Chi copre un pomeriggio dovrebbe trovarsi in notte il giorno dopo,
+    // benché la notte appartenga a un'altra sala.
+    const byDoctorDate = new Map(result.schedule.assignments.map(
+      item => [`${item.doctorId}|${item.date}`, item.shiftTypeId]));
+
+    let followed = 0;
+    let total = 0;
+    for (const assignment of result.schedule.assignments) {
+      if (assignment.shiftTypeId !== AFTERNOON.id) continue;
+      const nextDay = addDays(assignment.date, 1);
+      if (nextDay > '2026-04-30') continue;
+      total++;
+      if (byDoctorDate.get(`${assignment.doctorId}|${nextDay}`) === NIGHT.id) followed++;
+    }
+
+    expect(total).toBeGreaterThan(5);
+    expect(followed / total).toBeGreaterThan(0.6);
+  }, 20000);
+
+  it('preferisce lasciare liberi i giorni di smonto e riposo previsti', async () => {
+    const { generator, shiftTypes } = run({
+      rooms: twoRooms(),
+      doctorIds: ['a', 'b', 'c', 'd'],
+      schemes: [scheme],
+      rotationRule: rule,
+    });
+
+    const result = await generator.generate(40);
+    const adherence = measureAdherence(result.schedule.assignments, scheme, rule, shiftTypes);
+
+    const restedOnDuty = [...adherence.values()]
+      .reduce((sum, entry) => sum + entry.shouldRest, 0);
+    const inPattern = [...adherence.values()]
+      .reduce((sum, entry) => sum + entry.inPattern, 0);
+
+    expect(inPattern).toBeGreaterThan(restedOnDuty);
+  }, 20000);
+
+  it('in modalità vincolante non assegna nulla nei giorni previsti liberi', async () => {
+    const binding: RotationRule = { ...rule, strength: 'binding' };
+    const { generator, shiftTypes } = run({
+      rooms: twoRooms(),
+      doctorIds: ['a', 'b', 'c', 'd'],
+      schemes: [scheme],
+      rotationRule: binding,
+    });
+
+    const result = await generator.generate(20);
+    const adherence = measureAdherence(result.schedule.assignments, scheme, binding, shiftTypes);
+
+    for (const entry of adherence.values()) {
+      expect(entry.shouldRest).toBe(0);
+    }
+  }, 20000);
+
+  it('riprende il giro dal mese precedente', async () => {
+    // "c" ha chiuso marzo con una notte: il 1 aprile è di smonto.
+    const priorAssignments = [
+      makeAssignment('p1', '2026-03-30', 'pomeriggi', AFTERNOON.id, 'c'),
+      makeAssignment('p2', '2026-03-31', 'notti', NIGHT.id, 'c'),
+    ];
 
     const { generator } = run({
-      rooms: [room],
+      rooms: twoRooms(),
       doctorIds: ['a', 'b', 'c', 'd'],
+      schemes: [scheme],
+      rotationRule: { ...rule, strength: 'binding' },
+      priorAssignments,
+    });
+
+    const result = await generator.generate(20);
+    const firstDay = result.schedule.assignments.filter(item => item.date === '2026-04-01');
+
+    expect(firstDay.some(item => item.doctorId === 'c')).toBe(false);
+  }, 20000);
+
+  it('si applica solo ai medici indicati', async () => {
+    const restricted: RotationRule = { schemeId: 'rot', doctorIds: ['a'], strength: 'binding' };
+    const { generator, shiftTypes } = run({
+      rooms: twoRooms(),
+      doctorIds: ['a', 'b', 'c', 'd'],
+      schemes: [scheme],
+      rotationRule: restricted,
+    });
+
+    const result = await generator.generate(20);
+    const adherence = measureAdherence(
+      result.schedule.assignments, scheme, restricted, shiftTypes,
+    );
+
+    // Solo "a" viene misurato: per gli altri la regola non vale.
+    expect([...adherence.keys()]).toEqual(['a']);
+  }, 20000);
+
+  it('senza regola il calendario resta coperto', async () => {
+    const { generator } = run({
+      rooms: twoRooms(),
+      doctorIds: ['a', 'b', 'c'],
       schemes: [scheme],
     });
 
-    const result = await generator.generate(10);
-
-    // Il 1 aprile "a" è al passo 0 (mattina) e "b" al passo 1 (pomeriggio).
-    const firstDay = result.schedule.assignments.filter(item => item.date === '2026-04-01');
-    expect(firstDay.find(item => item.shiftTypeId === MORNING.id)?.doctorId).toBe('a');
-    expect(firstDay.find(item => item.shiftTypeId === AFTERNOON.id)?.doctorId).toBe('b');
-
-    // "c" è di smonto e "d" di riposo: non devono comparire.
-    expect(firstDay.some(item => ['c', 'd'].includes(item.doctorId))).toBe(false);
+    const result = await generator.generate(15);
     expect(result.coverageGaps).toBe(0);
   });
 });

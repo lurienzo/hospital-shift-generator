@@ -5,7 +5,7 @@ import { generateId } from '../utils/id';
 import './DoctorManager.css';
 
 export function DoctorManager() {
-  const { doctors, setDoctors, rooms, setRooms } = useConfig();
+  const { doctors, setDoctors, rooms, rotationRule, setRotationRule } = useConfig();
 
   const [newDoctorName, setNewDoctorName] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -41,28 +41,21 @@ export function DoctorManager() {
   };
 
   const removeDoctor = (doctor: Doctor) => {
-    const inCycles = rooms.filter(room => room.cycle?.doctorIds.includes(doctor.id));
-    const message = inCycles.length > 0
-      ? `Eliminare "${doctor.name}"?\n\nVerrà rimosso anche dai cicli di rotazione di: ${inCycles.map(room => room.name).join(', ')}.`
+    const inRotation = rotationRule.doctorIds.includes(doctor.id);
+    const message = inRotation
+      ? `Eliminare "${doctor.name}"?\n\nVerrà rimosso anche dalla rotazione del servizio.`
       : `Eliminare "${doctor.name}"?`;
     if (!window.confirm(message)) return;
 
     setDoctors(doctors.filter(other => other.id !== doctor.id));
 
-    // Un dottore eliminato non può restare nei cicli delle sale: lascerebbe
-    // buchi silenziosi nella rotazione.
-    if (inCycles.length > 0) {
-      setRooms(rooms.map(room => (
-        room.cycle?.doctorIds.includes(doctor.id)
-          ? {
-              ...room,
-              cycle: {
-                ...room.cycle,
-                doctorIds: room.cycle.doctorIds.filter(id => id !== doctor.id),
-              },
-            }
-          : room
-      )));
+    // Un dottore eliminato non può restare nell'elenco della rotazione:
+    // lascerebbe una posizione vuota nel giro.
+    if (inRotation) {
+      setRotationRule({
+        ...rotationRule,
+        doctorIds: rotationRule.doctorIds.filter(id => id !== doctor.id),
+      });
     }
 
     if (expandedId === doctor.id) setExpandedId(null);

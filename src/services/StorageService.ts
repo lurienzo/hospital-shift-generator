@@ -4,7 +4,9 @@ import {
   Doctor,
   GenerationConfig,
   MonthlySchedule,
+  NO_ROTATION_RULE,
   OperativeRoom,
+  RotationRule,
   ScheduleSlot,
   ScheduleVersion,
   ShiftScheme,
@@ -97,22 +99,23 @@ function normalizeSlot(slot: LegacySlot): ScheduleSlot {
   };
 }
 
-function normalizeRoom(room: OperativeRoom): OperativeRoom {
+/** Ciclo per sala delle versioni precedenti, ora sostituito dalla regola di servizio. */
+type LegacyRoom = OperativeRoom & { cycle?: unknown };
+
+function normalizeRoom(room: LegacyRoom): OperativeRoom {
+  const { cycle: _legacyCycle, ...rest } = room;
   const normalized: OperativeRoom = {
-    ...room,
-    slots: (room.slots ?? []).map(normalizeSlot).filter(slot => slot.shiftTypeId !== ''),
-    dayGroups: room.dayGroups ?? [],
+    ...rest,
+    slots: (rest.slots ?? []).map(normalizeSlot).filter(slot => slot.shiftTypeId !== ''),
+    dayGroups: rest.dayGroups ?? [],
   };
 
   // Una sala non può avere due modalità di rotazione insieme: se i dati
   // salvati ne contengono più di una vince quella più specifica.
-  if (normalized.cycle && normalized.cycle.doctorIds?.length) {
-    return { ...normalized, dayGroups: [], consecutiveShifts: undefined, consecutiveStartDay: undefined };
-  }
   if (normalized.dayGroups.length > 0) {
-    return { ...normalized, cycle: undefined, consecutiveShifts: undefined, consecutiveStartDay: undefined };
+    return { ...normalized, consecutiveShifts: undefined, consecutiveStartDay: undefined };
   }
-  return { ...normalized, cycle: undefined };
+  return normalized;
 }
 
 function normalizeSchedule(schedule: MonthlySchedule): MonthlySchedule {
@@ -147,6 +150,23 @@ export class StorageService {
 
   static saveCustomSchemes(schemes: ShiftScheme[]): void {
     write('schemes', schemes.filter(scheme => !scheme.builtIn));
+  }
+
+  // ----- Regola di rotazione del servizio -----
+
+  static loadRotationRule(): RotationRule {
+    const stored = read<Partial<RotationRule> | null>('rotationRule', null);
+    if (!stored) return { ...NO_ROTATION_RULE };
+
+    return {
+      schemeId: stored.schemeId ?? '',
+      doctorIds: stored.doctorIds ?? [],
+      strength: stored.strength === 'binding' ? 'binding' : 'preference',
+    };
+  }
+
+  static saveRotationRule(rule: RotationRule): void {
+    write('rotationRule', rule);
   }
 
   // ----- Sale e medici -----

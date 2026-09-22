@@ -57,27 +57,49 @@ Marcando una fascia come *a rotazione* si indicano la durata del blocco
 - una settimana a cavallo di due mesi resta un blocco unico, e chi l'ha
   iniziata a fine mese la completa nel mese successivo.
 
-### Schemi turni
+### Schemi turni e rotazione del servizio
 
-Uno **schema** è una sequenza standard di giorni, per esempio
+Uno **schema** è una sequenza standard di giornate, per esempio
 `Pomeriggio → Lunga → Notte → Smonto → Riposo`. Smonto e riposo non sono
 turni da coprire: indicano i giorni in cui non si lavora.
 
-Lo stesso schema si usa in due modi:
+Lo schema descrive come si succedono le giornate di un **medico**, non cosa
+serve a una sala. Attivandolo come **rotazione del servizio** (in
+*Impostazioni*) diventa la regola che tutti cercano di seguire, e qualunque
+sala può fornire il turno che il passo richiede: chi copre un pomeriggio in
+Terapia Intensiva può trovarsi la notte in Piastra Operatoria, perché è il
+passo successivo del giro.
 
-- **Riempire la settimana di una sala.** La sequenza viene distribuita sui
-  sette giorni a partire da quello scelto, e i flag di smontante e riposo
-  vengono dedotti dai passi di smonto e riposo che seguono ciascun turno.
-- **Come ciclo di rotazione dei medici.** I medici avanzano di un passo al
-  giorno partendo sfasati fra loro: con tanti medici quanti i passi del ciclo,
-  ogni giorno tutte le posizioni sono coperte.
+**Non c'è un giorno di partenza da impostare.** La posizione di un medico nello
+schema deriva dal turno che ha svolto più recentemente: chi ha fatto la notte è
+atteso in smonto il giorno dopo. Da questo seguono tre cose utili:
+
+- la rotazione **si avvia da sola** col primo calendario generato, e i medici
+  si distribuiscono sulle posizioni del giro senza doverli sfasare a mano;
+- **si riallinea** quando qualcuno esce dal giro per coprire un buco, invece di
+  accumulare scarti rispetto a un calendario teorico;
+- **prosegue fra i mesi**, riprendendo da dove era arrivata.
+
+La regola ha due intensità. *Da seguire* è una preferenza: il generatore la
+rispetta quando può, ma non lascia turni scoperti per rispettarla, e gli
+scostamenti compaiono nel calendario come avvisi. *Vincolante* impedisce di
+assegnare turni nei giorni di smonto e riposo previsti, anche a costo di
+lasciarli scoperti.
+
+Si può limitare la regola a un sottoinsieme di medici, per chi sta fuori dal
+giro. Le statistiche mostrano l'**aderenza alla rotazione** di ciascuno.
+
+Le fasce a rotazione (i blocchi, vedi sopra) restano fuori dal giro
+giornaliero: impegnano un medico per una settimana intera, quindi durante un
+blocco la rotazione resta sospesa e riprende dopo. Per questo non sono
+selezionabili come passo di uno schema.
 
 ## Come si usa
 
 1. **Sale operative** — aggiungi le sale o i reparti da coprire. Per ciascuno
    definisci la griglia dei turni della settimana: quali fasce servono in
-   quali giorni. Il pulsante *Applica schema* riempie la settimana con uno
-   schema standard invece di cliccare cella per cella.
+   quali giorni. I pulsanti a fine riga riempiono una fascia su tutti i
+   giorni, sui giorni lavorativi o sul weekend.
 2. **Dottori** — aggiungi le persone. Per ognuna si possono indicare le sale e
    i giorni della settimana in cui non lavora mai.
 3. **Genera** — scegli mese e anno, segna i festivi, indica assenze e
@@ -137,6 +159,9 @@ scoperti per rispettarli:
 
 - **Riposo secondo giorno** — il secondo giorno dopo un turno che lo richiede.
 - **Blocco diviso** — un blocco a rotazione coperto da medici diversi.
+- **Fuori rotazione** — un turno che non corrisponde al passo previsto dalla
+  rotazione del servizio, o assegnato in una giornata che lo schema vorrebbe
+  libera.
 
 ### Flag dei turni
 
@@ -150,19 +175,32 @@ Nella griglia della settimana ogni turno ha quattro flag:
 I flag appartengono alla coppia giorno + fascia: la notte del sabato può avere
 impostazioni diverse da quella del lunedì.
 
-### Rotazione delle sale
+### Continuità dentro una sala
 
-Ogni sala usa una sola modalità:
+Oltre alla rotazione del servizio, ogni sala può chiedere una continuità
+propria. Le modalità sono alternative fra loro:
 
 - **Nessuna** — ogni turno assegnato singolarmente, cercando l'equilibrio.
 - **Turni consecutivi** — N turni di fila allo stesso medico, eventualmente
   allineati a un giorno fisso della settimana.
 - **Gruppi di giorni** — i giorni dello stesso gruppo vanno allo stesso medico
   nella medesima settimana.
-- **Ciclo turni** — i medici seguono uno schema, sfasati fra loro.
 
-Le fasce a rotazione agiscono comunque, indipendentemente dalla modalità della
-sala, perché sono una proprietà della fascia e non della sala.
+Sono cose diverse dalla rotazione del servizio: riguardano la continuità
+*dentro una sala*, non la successione delle giornate di un medico su tutte le
+sale. Le fasce a rotazione agiscono comunque, perché sono una proprietà della
+fascia e non della sala.
+
+### Ordine di assegnazione
+
+Il generatore procede per priorità decrescente di rigidità:
+
+1. i turni fissati a mano;
+2. i **blocchi** delle fasce a rotazione, che impegnano un medico per giorni;
+3. i **gruppi di giorni** delle sale;
+4. i **turni consecutivi** delle sale;
+5. tutto il resto, dove la rotazione del servizio è il primo criterio di
+   scelta e l'equità del carico il secondo.
 
 ## Sviluppo
 
@@ -199,7 +237,8 @@ src/
   models/types.ts       tipi del dominio
   domain/               logica pura, senza React
     shiftTypes.ts       fasce orarie, sovrapposizioni, blocchi di rotazione
-    schemes.ts          schemi turni e cicli
+    schemes.ts          schemi turni
+    rotation.ts         posizione dei medici nel giro di rotazione
     validation.ts       vincoli, violazioni, turni da coprire
     stats.ts            statistiche e colonne delle tabelle
   services/
@@ -219,8 +258,8 @@ segnala.
 ### Dati salvati
 
 Le chiavi del `localStorage` hanno la forma `hsg:<idServizio>:<ambito>`, dove
-l'ambito è `rooms`, `doctors`, `shiftTypes`, `schemes`, `schedule`, `versions`
-o `generationConfig`. L'elenco dei servizi sta in `hsg_services` e quello
+l'ambito è `rooms`, `doctors`, `shiftTypes`, `schemes`, `rotationRule`,
+`schedule`, `versions` o `generationConfig`. L'elenco dei servizi sta in `hsg_services` e quello
 attivo in `hsg_active_service`.
 
 I dati salvati dalle versioni precedenti, che usavano chiavi globali senza

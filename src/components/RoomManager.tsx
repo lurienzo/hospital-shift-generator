@@ -4,7 +4,6 @@ import { blockLabel } from '../domain/shiftTypes';
 import { useConfig } from '../state/configContext';
 import { RoomSlotGrid } from './RoomSlotGrid';
 import { RoomRotation } from './RoomRotation';
-import { ApplySchemeDialog } from './ApplySchemeDialog';
 import { generateId } from '../utils/id';
 import './RoomManager.css';
 
@@ -14,12 +13,11 @@ const ROOM_COLORS = [
 ];
 
 export function RoomManager() {
-  const { rooms, setRooms, shiftTypes, shiftTypeIndex, schemes } = useConfig();
+  const { rooms, setRooms, shiftTypes, shiftTypeIndex } = useConfig();
 
   const [newRoomName, setNewRoomName] = useState('');
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [schemeTargetId, setSchemeTargetId] = useState<string | null>(null);
 
   const addRoom = () => {
     const name = newRoomName.trim();
@@ -56,8 +54,6 @@ export function RoomManager() {
     setRooms(rooms.filter(other => other.id !== room.id));
     if (expandedRoomId === room.id) setExpandedRoomId(null);
   };
-
-  const schemeTarget = rooms.find(room => room.id === schemeTargetId);
 
   return (
     <div className="room-manager stack">
@@ -154,11 +150,6 @@ export function RoomManager() {
                       {room.dayGroups.length} grupp{room.dayGroups.length === 1 ? 'o' : 'i'}
                     </span>
                   )}
-                  {rotation === 'cycle' && (
-                    <span className="badge badge-primary">
-                      ciclo · {room.cycle?.doctorIds.length} dottori
-                    </span>
-                  )}
                 </div>
 
                 <div className="row">
@@ -189,17 +180,9 @@ export function RoomManager() {
                 <div className="room-body">
                   <div className="panel-header">
                     <h4>Turni della settimana</h4>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => setSchemeTargetId(room.id)}
-                      disabled={schemes.length === 0}
-                      title={schemes.length === 0
-                        ? 'Crea prima uno schema in Impostazioni'
-                        : 'Riempi la settimana con uno schema standard'}
-                    >
-                      Applica schema
-                    </button>
+                    <span className="hint">
+                      Quali turni servono in questa sala, giorno per giorno
+                    </span>
                   </div>
 
                   <RoomSlotGrid
@@ -227,15 +210,6 @@ export function RoomManager() {
         })}
       </div>
 
-      {schemeTarget && (
-        <ApplySchemeDialog
-          room={schemeTarget}
-          schemes={schemes}
-          shiftTypes={shiftTypeIndex}
-          onApply={slots => updateRoom(schemeTarget.id, { slots })}
-          onClose={() => setSchemeTargetId(null)}
-        />
-      )}
     </div>
   );
 }

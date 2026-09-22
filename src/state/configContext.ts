@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { Doctor, OperativeRoom, ShiftScheme, ShiftType } from '../models/types';
+import { Doctor, OperativeRoom, RotationRule, ShiftScheme, ShiftType } from '../models/types';
 import { ShiftTypeIndex } from '../domain/shiftTypes';
 
 /**
@@ -20,6 +20,11 @@ export interface ConfigValue {
   schemes: ShiftScheme[];
   customSchemes: ShiftScheme[];
   setCustomSchemes: (schemes: ShiftScheme[]) => void;
+  /** Schema che i medici del servizio cercano di seguire. */
+  rotationRule: RotationRule;
+  setRotationRule: (rule: RotationRule) => void;
+  /** Schema della regola, se esiste ed è utilizzabile. */
+  rotationScheme: ShiftScheme | null;
   reset: () => void;
 }
 
