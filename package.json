@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "tsc --noEmit && eslint . && vitest run",
-    "smoke": "node tools/smoke.mjs"
+    "smoke": "node tools/smoke.mjs",
+    "hash-password": "node tools/hash-password.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

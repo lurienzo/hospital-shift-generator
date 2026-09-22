@@ -25,3 +25,8 @@ dist-ssr
 
 # Screenshot prodotti dalla verifica visiva
 tools/screenshots
+
+# Variabili d'ambiente locali: possono contenere l'impronta della password
+.env
+.env.local
+.env.*.local

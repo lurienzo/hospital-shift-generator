@@ -12,6 +12,7 @@ computer: tutto è salvato nel `localStorage`.
 - [Concetti](#concetti)
 - [Come si usa](#come-si-usa)
 - [Vincoli e generazione](#vincoli-e-generazione)
+- [Accesso all'applicazione](#accesso-allapplicazione)
 - [Sviluppo](#sviluppo)
 - [Struttura del codice](#struttura-del-codice)
 
@@ -271,6 +272,46 @@ attivo resta un criterio di preferenza, e fra chi ha già raggiunto il minimo
 viene scelto il meno carico, così le ore in eccesso si ripartiscono invece di
 accumularsi sulla stessa persona.
 
+## Accesso all'applicazione
+
+L'applicazione puo chiedere una password all'apertura. Serve a impedire che chi
+capita sull'indirizzo per caso si trovi davanti il pianificatore del reparto.
+
+**Non e una misura di sicurezza.** L'applicazione gira interamente nel browser,
+quindi tutto cio che serve a verificare la password viene scaricato insieme alla
+pagina: chi apre gli strumenti per sviluppatori la aggira. Per una protezione
+vera serve un controllo lato server, per esempio la protezione con password di
+Netlify o Cloudflare Access davanti al sito.
+
+I turni non sono comunque esposti: restano nel `localStorage` del browser di chi
+li ha creati e non passano da nessun server. Chi apre l'indirizzo senza aver mai
+usato l'app vede un'applicazione vuota.
+
+### Come si imposta
+
+Nel repo non finisce mai la password in chiaro, solo la sua impronta SHA-256.
+
+```bash
+npm run hash-password "la mia password"
+```
+
+Il comando stampa la riga da mettere in `.env.local`, che git ignora:
+
+```
+VITE_APP_PASSWORD_SHA256=<impronta>
+```
+
+Per la versione pubblicata, la stessa impronta va impostata come segreto del
+repository, che il workflow di deploy legge in fase di compilazione:
+
+```bash
+gh secret set VITE_APP_PASSWORD_SHA256 --body <impronta>
+```
+
+Se la variabile non e impostata il blocco non si attiva e l'applicazione si apre
+senza chiedere nulla: e il comportamento voluto in sviluppo e nei test. Lo
+sblocco vale per la sessione del browser.
+
 ## Sviluppo
 
 ```bash
@@ -288,6 +329,7 @@ npm run build    # produzione in dist/
 | `npm test` | suite di test (Vitest) |
 | `npm run check` | tipi, lint e test insieme |
 | `npm run smoke` | verifica visiva in un browser headless |
+| `npm run hash-password` | impronta della password di accesso |
 
 ### Verifica visiva
 

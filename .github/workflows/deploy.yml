@@ -34,8 +34,12 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          # Impronta della password di accesso. Se il segreto non e impostato
+          # l'applicazione si apre senza chiedere nulla.
+          VITE_APP_PASSWORD_SHA256: ${{ secrets.VITE_APP_PASSWORD_SHA256 }}
 
-      - name: Checkout triuzzi.github.io
+      - name: Checkout del sito di destinazione
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.PAGES_REPOSITORY }}
