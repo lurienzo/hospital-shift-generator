@@ -1,0 +1,118 @@
+.step-sequence {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sequence-step {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.375rem 0.5rem 0.375rem 0.625rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.sequence-step.off {
+  border-left-style: dashed;
+  background: var(--surface);
+}
+
+.step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.step-name {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.sequence-step.off .step-name {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.step-controls {
+  display: flex;
+  gap: 0.125rem;
+}
+
+/* ----- Anteprima settimana ----- */
+
+.scheme-preview {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.preview-day {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  padding: 0.4375rem 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.preview-day.off {
+  border-style: dashed;
+  background: transparent;
+}
+
+.preview-weekday {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.preview-step {
+  font-size: 0.75rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-day.off .preview-step {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.preview-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1875rem;
+}
+
+.preview-flags span {
+  padding: 0 0.1875rem;
+  border-radius: 3px;
+  background: var(--warning-soft);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  color: #fcd34d;
+}
+
+@media (max-width: 720px) {
+  .scheme-preview {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

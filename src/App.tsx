@@ -1,214 +1,230 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { OperativeRoom, Doctor, MonthlySchedule } from './models/types';
+import { useCallback, useState } from 'react';
+import { MonthlySchedule } from './models/types';
 import { StorageService } from './services/StorageService';
+import { useConfig } from './state/configContext';
 import { RoomManager } from './components/RoomManager';
 import { DoctorManager } from './components/DoctorManager';
 import { ScheduleGenerator } from './components/ScheduleGenerator';
 import { MonthlyCalendar } from './components/MonthlyCalendar';
 import { GeneralStats } from './components/GeneralStats';
+import { Settings } from './components/Settings';
+import { ServiceSwitcher } from './components/ServiceSwitcher';
 import './App.css';
 
-type Tab = 'rooms' | 'doctors' | 'generate' | 'calendar' | 'stats';
+type Tab = 'rooms' | 'doctors' | 'generate' | 'calendar' | 'stats' | 'settings';
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'rooms', label: 'Sale operative' },
+  { id: 'doctors', label: 'Dottori' },
+  { id: 'generate', label: 'Genera' },
+  { id: 'calendar', label: 'Calendario' },
+  { id: 'stats', label: 'Statistiche' },
+  { id: 'settings', label: 'Impostazioni' },
+];
+
+/**
+ * Impronta insensibile all'ordine delle assegnazioni: serve a capire se il
+ * calendario in lavorazione differisce da quello salvato. Un confronto su
+ * JSON grezzo segnalerebbe modifiche anche solo riordinando la lista.
+ */
+function fingerprint(schedule: MonthlySchedule | null): string {
+  if (!schedule) return '';
+  return schedule.assignments
+    .map(a => `${a.date}|${a.roomId}|${a.shiftTypeId}|${a.doctorId}|${a.locked ? 1 : 0}`)
+    .sort()
+    .join(';');
+}
+
+function loadInitialSchedule(): { schedule: MonthlySchedule | null; versionId: string | null } {
+  const schedule = StorageService.loadSchedule();
+  if (!schedule) return { schedule: null, versionId: null };
+
+  const active = StorageService.getActiveVersion(schedule.year, schedule.month);
+  return active
+    ? { schedule: active.schedule, versionId: active.id }
+    : { schedule, versionId: null };
+}
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('rooms');
-  const [rooms, setRooms] = useState<OperativeRoom[]>(() => StorageService.loadRooms());
-  const [doctors, setDoctors] = useState<Doctor[]>(() => StorageService.loadDoctors());
-  const [schedule, setSchedule] = useState<MonthlySchedule | null>(() => StorageService.loadSchedule());
-  
-  // Track the original saved version (before any edits)
-  const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
-  const [originalSchedule, setOriginalSchedule] = useState<MonthlySchedule | null>(null);
-  
-  // Track if this is a brand new generated schedule (never saved)
-  const [isNewDraft, setIsNewDraft] = useState<boolean>(false);
+  const { rooms, doctors, reset } = useConfig();
+  const [activeTab, setActiveTab] = useState<Tab>('calendar');
 
-  // Preselected month/year for generation (passed from calendar)
-  const [preselectedYear, setPreselectedYear] = useState<number | null>(null);
-  const [preselectedMonth, setPreselectedMonth] = useState<number | null>(null);
+  // All'avvio si riprende il calendario salvato e, se esiste, la versione
+  // attiva del suo mese: così le modifiche non salvate sono riconoscibili
+  // anche dopo un ricaricamento della pagina. L'inizializzatore pigro di
+  // useState garantisce che la lettura avvenga una volta sola per montaggio.
+  const [initial] = useState(loadInitialSchedule);
 
-  // Check if we have unsaved changes
-  const hasUnsavedChanges = useMemo(() => {
-    if (isNewDraft) return true;
-    if (!schedule || !originalSchedule) return false;
-    // Compare assignments to detect changes
-    return JSON.stringify(schedule.assignments) !== JSON.stringify(originalSchedule.assignments);
-  }, [schedule, originalSchedule, isNewDraft]);
+  const [schedule, setSchedule] = useState<MonthlySchedule | null>(initial.schedule);
+  const [savedVersionId, setSavedVersionId] = useState<string | null>(initial.versionId);
+  const [savedFingerprint, setSavedFingerprint] = useState<string>(() => fingerprint(initial.schedule));
+  const [isNewDraft, setIsNewDraft] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<MonthlySchedule | null>(initial.schedule);
 
-  const handleReset = () => {
-    if (window.confirm('Sei sicuro di voler cancellare tutti i dati? Questa azione non può essere annullata.')) {
-      StorageService.clearAll();
-      setRooms([]);
-      setDoctors([]);
-      setSchedule(null);
-      setOriginalSchedule(null);
-      setSavedVersionId(null);
-      setIsNewDraft(false);
-      setActiveTab('rooms');
-    }
-  };
+  const [preselected, setPreselected] = useState<{ year: number; month: number } | null>(null);
+  const [versionsRevision, setVersionsRevision] = useState(0);
 
-  useEffect(() => {
-    StorageService.saveRooms(rooms);
-  }, [rooms]);
+  const hasUnsavedChanges = isNewDraft || (
+    schedule !== null && savedSnapshot !== null && fingerprint(schedule) !== savedFingerprint
+  );
 
-  useEffect(() => {
-    StorageService.saveDoctors(doctors);
-  }, [doctors]);
+  const notifyVersionsChanged = useCallback(() => setVersionsRevision(value => value + 1), []);
 
-  // NO AUTO-SAVE: We removed the automatic persistence of schedule changes
-  // All saves must now be explicit through the version manager
-
-  const handleScheduleGenerated = useCallback((newSchedule: MonthlySchedule) => {
-    setSchedule(newSchedule);
-    setOriginalSchedule(null); // No original since it's new
+  const handleScheduleGenerated = useCallback((generated: MonthlySchedule) => {
+    setSchedule(generated);
+    setSavedSnapshot(null);
+    setSavedFingerprint('');
     setSavedVersionId(null);
     setIsNewDraft(true);
     setActiveTab('calendar');
   }, []);
 
-  const handleLoadVersion = useCallback((versionSchedule: MonthlySchedule, versionId: string) => {
-    setSchedule(versionSchedule);
-    setOriginalSchedule(JSON.parse(JSON.stringify(versionSchedule))); // Deep copy
+  const handleLoadVersion = useCallback((loaded: MonthlySchedule, versionId: string) => {
+    setSchedule(loaded);
+    setSavedSnapshot(loaded);
+    setSavedFingerprint(fingerprint(loaded));
     setSavedVersionId(versionId);
     setIsNewDraft(false);
   }, []);
 
-  const handleDiscardChanges = useCallback(() => {
-    if (originalSchedule) {
-      setSchedule(JSON.parse(JSON.stringify(originalSchedule))); // Restore from deep copy
-    }
-  }, [originalSchedule]);
-
-  const handleSaveVersion = useCallback((name: string, createNew: boolean) => {
-    if (!schedule) return;
-    
-    if (createNew || isNewDraft || !savedVersionId) {
-      // Create a new version
-      const newVersion = StorageService.saveScheduleVersion(schedule, name, true);
-      setSavedVersionId(newVersion.id);
-      setOriginalSchedule(JSON.parse(JSON.stringify(schedule)));
-      setIsNewDraft(false);
-    } else {
-      // Update existing version
-      StorageService.updateScheduleVersion(schedule.year, schedule.month, savedVersionId, schedule);
-      StorageService.renameScheduleVersion(schedule.year, schedule.month, savedVersionId, name);
-      setOriginalSchedule(JSON.parse(JSON.stringify(schedule)));
-    }
-    
-    // Also update the main schedule storage
-    StorageService.saveSchedule(schedule);
-  }, [schedule, savedVersionId, isNewDraft]);
-
-  const handleDuplicateVersion = useCallback((sourceVersionId: string, newName: string) => {
-    if (!schedule) return;
-    
-    const versions = StorageService.loadScheduleVersionsForMonth(schedule.year, schedule.month);
-    const sourceVersion = versions.find(v => v.id === sourceVersionId);
-    if (!sourceVersion) return;
-    
-    // Create a new version with the same schedule
-    const duplicatedVersion = StorageService.saveScheduleVersion(
-      sourceVersion.schedule, 
-      newName, 
-      false // Don't set as active
-    );
-    
-    return duplicatedVersion;
-  }, [schedule]);
-
-  const handleScheduleChange = useCallback((newSchedule: MonthlySchedule | null) => {
-    if (newSchedule) {
-      setSchedule(newSchedule);
-    } else {
-      setSchedule(null);
-      setOriginalSchedule(null);
+  const handleScheduleChange = useCallback((next: MonthlySchedule | null) => {
+    setSchedule(next);
+    if (next === null) {
+      setSavedSnapshot(null);
+      setSavedFingerprint('');
       setSavedVersionId(null);
       setIsNewDraft(false);
     }
   }, []);
 
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'rooms', label: 'Sale Operative', icon: '🏥' },
-    { id: 'doctors', label: 'Dottori', icon: '👨‍⚕️' },
-    { id: 'generate', label: 'Genera', icon: '⚡' },
-    { id: 'calendar', label: 'Calendario', icon: '📅' },
-    { id: 'stats', label: 'Statistiche', icon: '📊' },
-  ];
+  const handleDiscardChanges = useCallback(() => {
+    if (savedSnapshot) setSchedule(savedSnapshot);
+  }, [savedSnapshot]);
+
+  const handleSaveVersion = useCallback((name: string, createNew: boolean) => {
+    if (!schedule) return;
+
+    if (createNew || isNewDraft || !savedVersionId) {
+      const version = StorageService.createVersion(schedule, name, true);
+      setSavedVersionId(version.id);
+    } else {
+      StorageService.updateVersion(schedule.year, schedule.month, savedVersionId, { schedule, name });
+      StorageService.saveSchedule(schedule);
+    }
+
+    setSavedSnapshot(schedule);
+    setSavedFingerprint(fingerprint(schedule));
+    setIsNewDraft(false);
+    notifyVersionsChanged();
+  }, [schedule, savedVersionId, isNewDraft, notifyVersionsChanged]);
+
+  const handleDuplicateVersion = useCallback((sourceVersionId: string, newName: string) => {
+    if (!schedule) return;
+    const source = StorageService.loadVersionsForMonth(schedule.year, schedule.month)
+      .find(version => version.id === sourceVersionId);
+    if (!source) return;
+
+    StorageService.createVersion(source.schedule, newName, false);
+    notifyVersionsChanged();
+  }, [schedule, notifyVersionsChanged]);
+
+  const handleReset = () => {
+    const confirmed = window.confirm(
+      'Cancellare tutti i dati di questo servizio (sale, dottori, fasce orarie, schemi e '
+      + 'calendari)?\nGli altri servizi non vengono toccati e l’operazione non può essere annullata.',
+    );
+    if (!confirmed) return;
+
+    reset();
+    setSchedule(null);
+    setSavedSnapshot(null);
+    setSavedFingerprint('');
+    setSavedVersionId(null);
+    setIsNewDraft(false);
+    setPreselected(null);
+    notifyVersionsChanged();
+    setActiveTab('rooms');
+  };
+
+  const counts: Partial<Record<Tab, number>> = {
+    rooms: rooms.length,
+    doctors: doctors.length,
+  };
 
   return (
     <div className="app">
       <header className="app-header">
-        <div className="logo">
-          <span className="logo-icon">🏥</span>
-          <div className="logo-text">
-            <h1>Turni Ospedale</h1>
-            <span className="subtitle">Generatore Automatico</span>
-          </div>
+        <div className="app-brand">
+          <h1>Turni ospedale</h1>
+          <span className="subtitle">Pianificazione e generazione dei turni</span>
         </div>
-        <button className="btn-reset" onClick={handleReset} title="Cancella tutti i dati">
-          🗑️ Reset
-        </button>
+
+        <div className="row">
+          <ServiceSwitcher
+            hasUnsavedChanges={hasUnsavedChanges}
+            onManage={() => setActiveTab('settings')}
+          />
+          <button
+            type="button"
+            className="btn btn-danger btn-sm"
+            onClick={handleReset}
+            title="Cancella i dati del servizio attivo"
+          >
+            Azzera servizio
+          </button>
+        </div>
       </header>
 
-      <nav className="app-nav">
-        {tabs.map(tab => (
+      <nav className="app-nav" aria-label="Sezioni">
+        {TABS.map(tab => (
           <button
             key={tab.id}
+            type="button"
             className={`nav-tab ${activeTab === tab.id ? 'active' : ''}`}
+            aria-current={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
           >
-            <span className="tab-icon">{tab.icon}</span>
-            <span className="tab-label">{tab.label}</span>
-            {tab.id === 'rooms' && rooms.length > 0 && (
-              <span className="tab-badge">{rooms.length}</span>
-            )}
-            {tab.id === 'doctors' && doctors.length > 0 && (
-              <span className="tab-badge">{doctors.length}</span>
-            )}
+            {tab.label}
+            {counts[tab.id] ? <span className="badge">{counts[tab.id]}</span> : null}
           </button>
         ))}
       </nav>
 
       <main className="app-main">
-        {activeTab === 'rooms' && (
-          <RoomManager rooms={rooms} onRoomsChange={setRooms} />
-        )}
-        {activeTab === 'doctors' && (
-          <DoctorManager doctors={doctors} rooms={rooms} onDoctorsChange={setDoctors} />
-        )}
+        {activeTab === 'rooms' && <RoomManager />}
+
+        {activeTab === 'doctors' && <DoctorManager />}
+
         {activeTab === 'generate' && (
           <ScheduleGenerator
-            rooms={rooms}
-            doctors={doctors}
             onScheduleGenerated={handleScheduleGenerated}
-            preselectedYear={preselectedYear}
-            preselectedMonth={preselectedMonth}
+            preselected={preselected}
           />
         )}
+
         {activeTab === 'calendar' && (
-          <MonthlyCalendar 
-            schedule={schedule} 
-            rooms={rooms} 
-            doctors={doctors} 
+          <MonthlyCalendar
+            schedule={schedule}
             onScheduleChange={handleScheduleChange}
             onNavigateToGenerate={(year, month) => {
-              setPreselectedYear(year);
-              setPreselectedMonth(month);
+              setPreselected({ year, month });
               setActiveTab('generate');
             }}
             hasUnsavedChanges={hasUnsavedChanges}
             isNewDraft={isNewDraft}
             savedVersionId={savedVersionId}
+            versionsRevision={versionsRevision}
             onLoadVersion={handleLoadVersion}
             onSaveVersion={handleSaveVersion}
             onDiscardChanges={handleDiscardChanges}
             onDuplicateVersion={handleDuplicateVersion}
+            onVersionsChanged={notifyVersionsChanged}
           />
         )}
-        {activeTab === 'stats' && (
-          <GeneralStats doctors={doctors} rooms={rooms} />
-        )}
+
+        {activeTab === 'stats' && <GeneralStats revision={versionsRevision} />}
+
+        {activeTab === 'settings' && <Settings hasUnsavedChanges={hasUnsavedChanges} />}
       </main>
     </div>
   );

@@ -1,1264 +1,966 @@
 import {
-  OperativeRoom,
-  Doctor,
-  MonthlySchedule,
   Assignment,
-  DoctorStats,
-  Weekday,
-  TimeSlot,
-  TIME_SLOTS,
-  TIME_SLOT_ORDER,
-  TIME_SLOT_HOURS,
-  GenerationConfig,
-  HolidayConfig,
   DayGroup,
-  WEEKDAYS,
+  Doctor,
+  DoctorStats,
+  GenerationConfig,
+  MonthlySchedule,
+  OperativeRoom,
+  ShiftScheme,
+  Weekday,
+  getRotationMode,
 } from '../models/types';
-import { generateId } from '../utils/idGenerator';
-import { parseDateLocal } from '../utils/constants';
-
-interface SlotRequirement {
-  date: string;
-  roomId: string;
-  roomName: string;
-  timeSlot: TimeSlot;
-  isWeekendOrHoliday: boolean;
-  isCritical: boolean;
-  requiresNextDayRest: boolean;
-  requiresSecondDayRest: boolean;
-  isFullDayExclusive: boolean;
-}
+import { ShiftTypeIndex, blockIndexOf } from '../domain/shiftTypes';
+import { cycleStepFor, isSchemeUsable } from '../domain/schemes';
+import { computeStats } from '../domain/stats';
+import {
+  AvailabilityRules,
+  RoomSlotIndex,
+  SlotRequirement,
+  buildRequirements,
+  findCoverageGaps,
+  findViolations,
+  requirementKey,
+} from '../domain/validation';
+import { addDays, buildISODate, buildMonthDays, mondayFirstIndex } from '../utils/date';
+import { generateId } from '../utils/id';
 
 export interface GenerationProgress {
   current: number;
   total: number;
   percentage: number;
   validSchedules: number;
-  bestCost: number | null;
+  bestScore: number | null;
 }
 
-export interface GenerationResult {
+/** Esito di un singolo tentativo. */
+export interface ScheduleCandidate {
   schedule: MonthlySchedule;
-  cost: number;
+  score: number;
   stats: DoctorStats[];
+  coverageGaps: number;
+  errors: number;
+  warnings: number;
+}
+
+export interface GenerationResult extends ScheduleCandidate {
   attempts: number;
+  /** Tentativi senza errori né turni scoperti. */
   validFound: number;
 }
 
-export interface PriorDoctorStats {
-  doctorId: string;
-  totalShifts: number;
-  totalHours: number;
-  weekendShifts: number;
-  criticalShifts: number;
-  shiftsByRoom: Record<string, number>;
-  shiftsByTimeSlot: Record<TimeSlot, number>;
+export interface GeneratorInput {
+  rooms: OperativeRoom[];
+  doctors: Doctor[];
+  shiftTypes: ShiftTypeIndex;
+  schemes: ShiftScheme[];
+  config: GenerationConfig;
+  /** Statistiche dei mesi precedenti, per bilanciare sull'anno. */
+  priorStats?: DoctorStats[];
+  /**
+   * Assegnazioni del mese precedente. Servono ai blocchi a rotazione che
+   * scavalcano il cambio di mese: la settimana iniziata a fine mese resta
+   * dello stesso medico.
+   */
+  priorAssignments?: Assignment[];
 }
 
-export interface YearPriorStatsResult {
-  stats: PriorDoctorStats[];
-  monthsCovered: number[];
-}
+export const EFFORT_PRESETS = {
+  fast: { label: 'Rapida', attempts: 60 },
+  standard: { label: 'Standard', attempts: 300 },
+  thorough: { label: 'Accurata', attempts: 1200 },
+} as const;
+
+export type EffortLevel = keyof typeof EFFORT_PRESETS;
+
+/** Pesi del punteggio: più basso è meglio. */
+const PENALTY = {
+  coverageGap: 1000,
+  error: 250,
+  warning: 8,
+  varianceShifts: 1,
+  varianceHours: 0.1,
+  varianceDays: 1.2,
+  varianceWeekend: 1.5,
+  varianceCritical: 1.8,
+  variancePerRoom: 0.8,
+  variancePerShiftType: 0.6,
+  // Un blocco di diurnismo pesa molto più di un turno singolo: lo squilibrio
+  // fra chi ne fa due e chi nessuno va corretto con priorità.
+  variancePerBlock: 6,
+} as const;
 
 export class ScheduleGeneratorService {
-  private rooms: OperativeRoom[];
-  private doctors: Doctor[];
-  private config: GenerationConfig;
-  private priorStats: Map<string, PriorDoctorStats>;
+  private readonly rooms: OperativeRoom[];
+  private readonly doctors: Doctor[];
+  private readonly doctorById: Map<string, Doctor>;
+  private readonly shiftTypes: ShiftTypeIndex;
+  private readonly schemes: ShiftScheme[];
+  private readonly config: GenerationConfig;
+  private readonly availability: AvailabilityRules;
+  private readonly slotIndex: RoomSlotIndex;
+  private readonly priorStats: Map<string, DoctorStats>;
+  private readonly requirements: SlotRequirement[];
+  private readonly requirementsByKey: Map<string, SlotRequirement>;
+  private readonly monthDates: string[];
+  /** Proprietario di un blocco a rotazione iniziato nel mese precedente. */
+  private readonly inheritedBlockOwners: Map<string, string>;
 
-  constructor(
-    rooms: OperativeRoom[], 
-    doctors: Doctor[], 
-    config: GenerationConfig,
-    priorStats?: PriorDoctorStats[]
-  ) {
-    this.rooms = rooms;
-    this.doctors = doctors;
-    this.config = config;
-    this.priorStats = new Map();
-    
-    if (priorStats) {
-      for (const stat of priorStats) {
-        this.priorStats.set(stat.doctorId, stat);
-      }
-    }
+  constructor(input: GeneratorInput) {
+    this.rooms = input.rooms;
+    this.doctors = input.doctors;
+    this.doctorById = new Map(input.doctors.map(doctor => [doctor.id, doctor]));
+    this.shiftTypes = input.shiftTypes;
+    this.schemes = input.schemes;
+    this.config = input.config;
+    this.availability = new AvailabilityRules(input.config);
+    this.slotIndex = new RoomSlotIndex(input.rooms);
+    this.priorStats = new Map((input.priorStats ?? []).map(stat => [stat.doctorId, stat]));
+
+    // I requisiti del mese non cambiano fra un tentativo e l'altro: calcolarli
+    // una volta sola evita di rifare lo stesso lavoro centinaia di volte.
+    this.requirements = buildRequirements(
+      input.rooms,
+      input.config.year,
+      input.config.month,
+      input.config.holidays,
+    );
+    this.requirementsByKey = new Map(
+      this.requirements.map(requirement => [requirementKey(requirement), requirement]),
+    );
+    this.monthDates = buildMonthDays(input.config.year, input.config.month).map(day => day.date);
+    this.inheritedBlockOwners = collectBlockOwners(input.priorAssignments ?? [], input.shiftTypes);
   }
 
-  generate(): MonthlySchedule {
-    const requirements = this.buildRequirements();
-    const assignments = this.assignDoctors(requirements, Math.random());
+  /**
+   * Genera più calendari con punti di partenza casuali e restituisce il
+   * migliore. Il punteggio somma turni scoperti, violazioni e squilibrio fra
+   * medici: anche quando nessun tentativo è perfetto viene restituito quello
+   * meno problematico, non uno qualsiasi.
+   */
+  async generate(
+    attempts: number,
+    onProgress?: (progress: GenerationProgress) => void,
+  ): Promise<GenerationResult> {
+    let best: ScheduleCandidate | null = null;
+    let validFound = 0;
 
-    return {
+    // Un batch abbastanza piccolo per restituire il controllo all'interfaccia
+    // con regolarità, abbastanza grande da non pagare troppo il context switch.
+    const batchSize = 25;
+
+    for (let completed = 0; completed < attempts; ) {
+      const batchEnd = Math.min(completed + batchSize, attempts);
+
+      for (; completed < batchEnd; completed++) {
+        const candidate = this.buildCandidate(Math.random());
+        if (candidate.coverageGaps === 0 && candidate.errors === 0) validFound++;
+        if (!best || candidate.score < best.score) best = candidate;
+      }
+
+      onProgress?.({
+        current: completed,
+        total: attempts,
+        percentage: Math.round((completed / attempts) * 100),
+        validSchedules: validFound,
+        bestScore: best ? best.score : null,
+      });
+
+      await yieldToBrowser();
+    }
+
+    const result = best ?? this.buildCandidate(Math.random());
+    return { ...result, attempts, validFound };
+  }
+
+  private buildCandidate(seed: number): ScheduleCandidate {
+    const assignments = this.assign(seed);
+    const schedule: MonthlySchedule = {
       year: this.config.year,
       month: this.config.month,
-      holidays: this.config.holidays.map(h => h.date),
+      holidays: this.config.holidays.map(holiday => holiday.date),
       assignments,
     };
-  }
 
-  async generateOptimized(
-    attempts: number = 300,
-    onProgress?: (progress: GenerationProgress) => void
-  ): Promise<GenerationResult> {
-    const requirements = this.buildRequirements();
-    
-    let bestSchedule: MonthlySchedule | null = null;
-    let bestCost = Infinity;
-    let bestStats: DoctorStats[] = [];
-    let validSchedulesCount = 0;
+    const stats = computeStats([schedule], {
+      doctors: this.doctors,
+      rooms: this.rooms,
+      shiftTypes: this.shiftTypes,
+      slotIndex: this.slotIndex,
+    });
 
-    const batchSize = 100;
-    const totalBatches = Math.ceil(attempts / batchSize);
+    const report = findViolations(assignments, {
+      rooms: this.rooms,
+      doctors: this.doctors,
+      shiftTypes: this.shiftTypes,
+      availability: this.availability,
+      slotIndex: this.slotIndex,
+    });
+    const gaps = findCoverageGaps(this.requirements, assignments).length;
 
-    for (let batch = 0; batch < totalBatches; batch++) {
-      const batchStart = batch * batchSize;
-      const batchEnd = Math.min(batchStart + batchSize, attempts);
-
-      for (let i = batchStart; i < batchEnd; i++) {
-        const seed = Math.random();
-        const assignments = this.assignDoctors(requirements, seed);
-
-        const schedule: MonthlySchedule = {
-          year: this.config.year,
-          month: this.config.month,
-          holidays: this.config.holidays.map(h => h.date),
-          assignments,
-        };
-
-        const stats = ScheduleGeneratorService.calculateStats(schedule, this.doctors, this.rooms);
-        const warnings = this.countWarnings(schedule);
-        
-        if (warnings === 0) {
-          validSchedulesCount++;
-          const cost = this.calculateCost(stats);
-          
-          if (cost < bestCost) {
-            bestCost = cost;
-            bestSchedule = schedule;
-            bestStats = stats;
-          }
-        }
-      }
-
-      if (onProgress) {
-        onProgress({
-          current: batchEnd,
-          total: attempts,
-          percentage: Math.round((batchEnd / attempts) * 100),
-          validSchedules: validSchedulesCount,
-          bestCost: bestCost === Infinity ? null : bestCost,
-        });
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
-
-    if (!bestSchedule) {
-      const seed = Math.random();
-      const assignments = this.assignDoctors(requirements, seed);
-      bestSchedule = {
-        year: this.config.year,
-        month: this.config.month,
-        holidays: this.config.holidays.map(h => h.date),
-        assignments,
-      };
-      bestStats = ScheduleGeneratorService.calculateStats(bestSchedule, this.doctors, this.rooms);
-      bestCost = this.calculateCost(bestStats);
-    }
+    const score =
+      gaps * PENALTY.coverageGap +
+      report.errors.length * PENALTY.error +
+      report.warnings.length * PENALTY.warning +
+      this.fairnessCost(stats);
 
     return {
-      schedule: bestSchedule,
-      cost: bestCost,
-      stats: bestStats,
-      attempts,
-      validFound: validSchedulesCount,
+      schedule,
+      score,
+      stats,
+      coverageGaps: gaps,
+      errors: report.errors.length,
+      warnings: report.warnings.length,
     };
   }
 
-  private countWarnings(schedule: MonthlySchedule): number {
-    let warnings = 0;
+  /** Squilibrio del carico fra medici, mesi precedenti inclusi se richiesto. */
+  private fairnessCost(stats: DoctorStats[]): number {
+    if (stats.length === 0) return Number.POSITIVE_INFINITY;
 
-    const restDays = new Map<string, Set<string>>();
-    const secondRestDays = new Map<string, Set<string>>();
-    const exclusiveDays = new Map<string, Set<string>>();
-    const doctorMap = new Map<string, Doctor>();
-
-    for (const doctor of this.doctors) {
-      restDays.set(doctor.id, new Set());
-      secondRestDays.set(doctor.id, new Set());
-      exclusiveDays.set(doctor.id, new Set());
-      doctorMap.set(doctor.id, doctor);
-    }
-
-    const sortedAssignments = [...schedule.assignments].sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date);
-      if (dateCompare !== 0) return dateCompare;
-      return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
-    });
-
-    // Track assignments per doctor per date+timeSlot (same-slot double-booking)
-    const doctorSlotKeys = new Set<string>();
-
-    for (const assignment of sortedAssignments) {
-      // Skip constraint checks for pre-filled (locked) assignments — they're intentional
-      if (assignment.locked) {
-        // Still track rest days / exclusive days from locked assignments
-        const room = this.rooms.find(r => r.id === assignment.roomId);
-        const slot = room?.slots.find(s => s.timeSlot === assignment.timeSlot);
-        if (slot?.requiresNextDayRest) {
-          restDays.get(assignment.doctorId)?.add(this.getDateOffset(assignment.date, 1));
-        }
-        if (slot?.requiresSecondDayRest) {
-          secondRestDays.get(assignment.doctorId)?.add(this.getDateOffset(assignment.date, 2));
-        }
-        if (slot?.isFullDayExclusive) {
-          exclusiveDays.get(assignment.doctorId)?.add(assignment.date);
-        }
-        continue;
-      }
-
-      const doctor = doctorMap.get(assignment.doctorId);
-
-      // Excluded date
-      if (this.isDoctorDateBlocked(assignment.doctorId, assignment.date, assignment.timeSlot)) {
-        warnings++;
-      }
-
-      // Excluded room
-      if (doctor?.excludedRooms.includes(assignment.roomId)) {
-        warnings++;
-      }
-
-      // Excluded weekday
-      if (doctor) {
-        const date = parseDateLocal(assignment.date);
-        const weekday = this.getWeekday(date);
-        if (doctor.excludedWeekdays.includes(weekday)) {
-          warnings++;
-        }
-      }
-
-      // Same doctor assigned to same time slot twice on same day
-      const slotKey = `${assignment.doctorId}-${assignment.date}-${assignment.timeSlot}`;
-      if (doctorSlotKeys.has(slotKey)) {
-        warnings++;
-      }
-      doctorSlotKeys.add(slotKey);
-
-      // Rest day violation (hard — smontante)
-      if (restDays.get(assignment.doctorId)?.has(assignment.date)) {
-        warnings++;
-      }
-
-      // Second rest day violation (soft — riposo, counts as half a warning)
-      if (secondRestDays.get(assignment.doctorId)?.has(assignment.date)) {
-        warnings++;
-      }
-
-      const room = this.rooms.find(r => r.id === assignment.roomId);
-      const slot = room?.slots.find(s => s.timeSlot === assignment.timeSlot);
-
-      if (slot?.requiresNextDayRest) {
-        restDays.get(assignment.doctorId)!.add(this.getDateOffset(assignment.date, 1));
-      }
-      if (slot?.requiresSecondDayRest) {
-        secondRestDays.get(assignment.doctorId)!.add(this.getDateOffset(assignment.date, 2));
-      }
-
-      if (slot?.isFullDayExclusive) {
-        if (exclusiveDays.get(assignment.doctorId)?.has(assignment.date)) {
-          warnings++;
-        }
-        exclusiveDays.get(assignment.doctorId)!.add(assignment.date);
-      }
-    }
-
-    // Check for understaffed slots
-    const requirements = this.buildRequirements();
-    for (const req of requirements) {
-      const hasAssignment = schedule.assignments.some(
-        a => a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
-      );
-      if (!hasAssignment) {
-        warnings++;
-      }
-    }
-
-    return warnings;
-  }
-
-  private calculateCost(stats: DoctorStats[]): number {
-    if (stats.length === 0) return Infinity;
-
-    // If we have prior stats, combine them with current stats for cost calculation
-    const combinedStats = stats.map(s => {
-      const priorStat = this.priorStats.get(s.doctorId);
-      if (!priorStat) return s;
-      
-      // Combine current month stats with prior year stats
-      const combinedShiftsByRoom: Record<string, number> = { ...s.shiftsByRoom };
-      for (const [roomId, count] of Object.entries(priorStat.shiftsByRoom)) {
-        combinedShiftsByRoom[roomId] = (combinedShiftsByRoom[roomId] || 0) + count;
-      }
-      
-      const combinedShiftsByTimeSlot: Record<TimeSlot, number> = { ...s.shiftsByTimeSlot };
-      for (const [timeSlot, count] of Object.entries(priorStat.shiftsByTimeSlot)) {
-        combinedShiftsByTimeSlot[timeSlot as TimeSlot] = (combinedShiftsByTimeSlot[timeSlot as TimeSlot] || 0) + count;
-      }
-      
+    const combined = stats.map(stat => {
+      const prior = this.priorStats.get(stat.doctorId);
+      if (!prior) return stat;
       return {
-        ...s,
-        totalShifts: s.totalShifts + priorStat.totalShifts,
-        totalHours: s.totalHours + priorStat.totalHours,
-        distinctDays: s.distinctDays + (priorStat.totalShifts > 0 ? priorStat.totalShifts : 0),
-        weekendShifts: s.weekendShifts + priorStat.weekendShifts,
-        criticalShifts: s.criticalShifts + priorStat.criticalShifts,
-        shiftsByRoom: combinedShiftsByRoom,
-        shiftsByTimeSlot: combinedShiftsByTimeSlot,
+        ...stat,
+        totalShifts: stat.totalShifts + prior.totalShifts,
+        totalHours: stat.totalHours + prior.totalHours,
+        distinctDays: stat.distinctDays + prior.distinctDays,
+        weekendShifts: stat.weekendShifts + prior.weekendShifts,
+        criticalShifts: stat.criticalShifts + prior.criticalShifts,
+        shiftsByRoom: mergeCounts(stat.shiftsByRoom, prior.shiftsByRoom),
+        shiftsByShiftType: mergeCounts(stat.shiftsByShiftType, prior.shiftsByShiftType),
+        blocksByShiftType: mergeCounts(stat.blocksByShiftType, prior.blocksByShiftType),
       };
     });
 
-    const avgShifts = combinedStats.reduce((sum, s) => sum + s.totalShifts, 0) / combinedStats.length;
-    const avgHours = combinedStats.reduce((sum, s) => sum + s.totalHours, 0) / combinedStats.length;
-    const avgDays = combinedStats.reduce((sum, s) => sum + s.distinctDays, 0) / combinedStats.length;
-    const avgWeekend = combinedStats.reduce((sum, s) => sum + s.weekendShifts, 0) / combinedStats.length;
-    const avgCritical = combinedStats.reduce((sum, s) => sum + s.criticalShifts, 0) / combinedStats.length;
+    let cost =
+      variance(combined, stat => stat.totalShifts) * PENALTY.varianceShifts +
+      variance(combined, stat => stat.totalHours) * PENALTY.varianceHours +
+      variance(combined, stat => stat.distinctDays) * PENALTY.varianceDays +
+      variance(combined, stat => stat.weekendShifts) * PENALTY.varianceWeekend +
+      variance(combined, stat => stat.criticalShifts) * PENALTY.varianceCritical;
 
-    const varianceShifts = combinedStats.reduce((sum, s) => sum + Math.pow(s.totalShifts - avgShifts, 2), 0) / combinedStats.length;
-    const varianceHours = combinedStats.reduce((sum, s) => sum + Math.pow(s.totalHours - avgHours, 2), 0) / combinedStats.length;
-    const varianceDays = combinedStats.reduce((sum, s) => sum + Math.pow(s.distinctDays - avgDays, 2), 0) / combinedStats.length;
-    const varianceWeekend = combinedStats.reduce((sum, s) => sum + Math.pow(s.weekendShifts - avgWeekend, 2), 0) / combinedStats.length;
-    const varianceCritical = combinedStats.reduce((sum, s) => sum + Math.pow(s.criticalShifts - avgCritical, 2), 0) / combinedStats.length;
-
-    let variancePerRoom = 0;
     for (const room of this.rooms) {
-      const avgRoom = combinedStats.reduce((sum, s) => sum + (s.shiftsByRoom[room.id] || 0), 0) / combinedStats.length;
-      variancePerRoom += combinedStats.reduce((sum, s) => sum + Math.pow((s.shiftsByRoom[room.id] || 0) - avgRoom, 2), 0) / combinedStats.length;
+      cost += variance(combined, stat => stat.shiftsByRoom[room.id] ?? 0) * PENALTY.variancePerRoom;
     }
-
-    const cost = 
-      varianceShifts * 1.0 +
-      varianceHours * 0.1 +
-      varianceDays * 1.2 +
-      varianceWeekend * 1.5 +
-      varianceCritical * 1.8 +
-      variancePerRoom * 0.8;
+    for (const shiftType of this.shiftTypes.all) {
+      cost += variance(combined, stat => stat.shiftsByShiftType[shiftType.id] ?? 0)
+        * PENALTY.variancePerShiftType;
+    }
+    for (const shiftType of this.shiftTypes.rotational) {
+      cost += variance(combined, stat => stat.blocksByShiftType[shiftType.id] ?? 0)
+        * PENALTY.variancePerBlock;
+    }
 
     return cost;
   }
 
-  private buildRequirements(): SlotRequirement[] {
-    const requirements: SlotRequirement[] = [];
-    const daysInMonth = new Date(this.config.year, this.config.month, 0).getDate();
+  // -------------------------------------------------------------------------
+  // Assegnazione
+  // -------------------------------------------------------------------------
 
-    const holidayMap = new Map<string, HolidayConfig>();
-    for (const holiday of this.config.holidays) {
-      holidayMap.set(holiday.date, holiday);
+  private assign(seed: number): Assignment[] {
+    const random = createSeededRandom(seed);
+    const ledger = new DoctorLedger(this.doctors, this.priorStats);
+
+    const locked: Assignment[] = this.config.prefilledAssignments.map(assignment => ({
+      ...assignment,
+      locked: true,
+    }));
+    const assignments: Assignment[] = [];
+    const covered = new Set<string>();
+
+    for (const assignment of locked) {
+      assignments.push(assignment);
+      covered.add(requirementKey(assignment));
+      ledger.record(assignment, this.requirementFor(assignment));
     }
 
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(this.config.year, this.config.month - 1, day);
-      const weekday = this.getWeekday(date);
-      const dateStr = `${this.config.year}-${String(this.config.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const isWeekendOrHoliday = this.isWeekendOrHoliday(date, dateStr);
-      const holidayConfig = holidayMap.get(dateStr);
+    // I giorni di smonto e riposo dei cicli valgono per tutte le sale, quindi
+    // vengono registrati prima di qualsiasi assegnazione.
+    this.markCycleRestDays(ledger);
 
-      for (const room of this.rooms) {
-        if (holidayConfig && (holidayConfig.disabledRooms || []).includes(room.id)) {
-          continue;
-        }
-
-        for (const slot of room.slots) {
-          if (slot.weekday === weekday) {
-            requirements.push({
-              date: dateStr,
-              roomId: room.id,
-              roomName: room.name,
-              timeSlot: slot.timeSlot,
-              isWeekendOrHoliday,
-              isCritical: slot.isCritical,
-              requiresNextDayRest: slot.requiresNextDayRest,
-              requiresSecondDayRest: slot.requiresSecondDayRest || false,
-              isFullDayExclusive: slot.isFullDayExclusive,
-            });
-          }
-        }
-      }
-    }
-
-    return requirements;
-  }
-
-  private isWeekendOrHoliday(date: Date, dateStr: string): boolean {
-    const dayOfWeek = date.getDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6) return true;
-    return this.config.holidays.some(h => h.date === dateStr);
-  }
-
-  private getWeekday(date: Date): Weekday {
-    const dayIndex = date.getDay();
-    const mapping: Weekday[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    return mapping[dayIndex];
-  }
-
-  private getDateOffset(dateStr: string, offsetDays: number): string {
-    const d = parseDateLocal(dateStr);
-    d.setDate(d.getDate() + offsetDays);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }
-
-  private isDoctorDateBlocked(doctorId: string, date: string, timeSlot?: TimeSlot): boolean {
-    const mode = this.config.doctorAvailabilityMode?.[doctorId] || 'exclusion';
-    if (mode === 'availability') {
-      const available = this.config.doctorDateAvailability?.[doctorId] || [];
-      if (available.length === 0) return false;
-      // Available if full day OR specific slot is in the list
-      const dayAvailable = available.includes(date);
-      const slotAvailable = timeSlot ? available.includes(`${date}:${timeSlot}`) : false;
-      return !dayAvailable && !slotAvailable;
-    }
-    const excluded = this.config.doctorDateExclusions?.[doctorId] || [];
-    // Blocked if full day OR specific slot is excluded
-    const dayExcluded = excluded.includes(date);
-    const slotExcluded = timeSlot ? excluded.includes(`${date}:${timeSlot}`) : false;
-    return dayExcluded || slotExcluded;
-  }
-
-  private createSeededRandom(seed: number): () => number {
-    let state = Math.max(1, Math.floor(seed * 2147483646) + 1);
-    return () => {
-      state = (state * 16807) % 2147483647;
-      return (state - 1) / 2147483646;
-    };
-  }
-
-  private assignDoctors(requirements: SlotRequirement[], seed: number = Math.random()): Assignment[] {
-    const seededRandom = this.createSeededRandom(seed);
-    // Seed with pre-filled (locked) assignments
-    const lockedAssignments: Assignment[] = (this.config.prefilledAssignments || []).map(a => ({ ...a, locked: true }));
-    const assignments: Assignment[] = [...lockedAssignments];
-    const doctorShiftCounts: Map<string, number> = new Map();
-    const doctorWeekendCounts: Map<string, number> = new Map();
-    const doctorCriticalCounts: Map<string, number> = new Map();
-    const doctorRoomCounts: Map<string, Map<string, number>> = new Map();
-    const doctorTimeSlotCounts: Map<string, Map<TimeSlot, number>> = new Map();
-    const doctorLastRoom: Map<string, Map<string, string>> = new Map();
-    const doctorRestDays: Map<string, Set<string>> = new Map();
-    const doctorExclusiveDays: Map<string, Set<string>> = new Map();
-
-    // Initialize with prior stats if available (for year-based balancing)
-    for (const doctor of this.doctors) {
-      const priorStat = this.priorStats.get(doctor.id);
-
-      doctorShiftCounts.set(doctor.id, priorStat?.totalShifts || 0);
-      doctorWeekendCounts.set(doctor.id, priorStat?.weekendShifts || 0);
-      doctorCriticalCounts.set(doctor.id, priorStat?.criticalShifts || 0);
-      doctorRoomCounts.set(doctor.id, new Map());
-      doctorTimeSlotCounts.set(doctor.id, new Map());
-      doctorLastRoom.set(doctor.id, new Map());
-      doctorRestDays.set(doctor.id, new Set());
-      doctorExclusiveDays.set(doctor.id, new Set());
-
-      for (const room of this.rooms) {
-        const priorRoomCount = priorStat?.shiftsByRoom[room.id] || 0;
-        doctorRoomCounts.get(doctor.id)!.set(room.id, priorRoomCount);
-      }
-      for (const timeSlot of TIME_SLOTS) {
-        const priorTimeSlotCount = priorStat?.shiftsByTimeSlot[timeSlot] || 0;
-        doctorTimeSlotCounts.get(doctor.id)!.set(timeSlot, priorTimeSlotCount);
-      }
-    }
-
-    // Seed tracking maps with pre-filled assignment counts
-    for (const pa of lockedAssignments) {
-      if (!doctorShiftCounts.has(pa.doctorId)) continue;
-      doctorShiftCounts.set(pa.doctorId, (doctorShiftCounts.get(pa.doctorId) || 0) + 1);
-
-      const paDate = parseDateLocal(pa.date);
-      if (this.isWeekendOrHoliday(paDate, pa.date)) {
-        doctorWeekendCounts.set(pa.doctorId, (doctorWeekendCounts.get(pa.doctorId) || 0) + 1);
-      }
-
-      const room = this.rooms.find(r => r.id === pa.roomId);
-      const slot = room?.slots.find(s => s.timeSlot === pa.timeSlot);
-      if (slot?.isCritical) {
-        doctorCriticalCounts.set(pa.doctorId, (doctorCriticalCounts.get(pa.doctorId) || 0) + 1);
-      }
-
-      doctorRoomCounts.get(pa.doctorId)?.set(pa.roomId, (doctorRoomCounts.get(pa.doctorId)?.get(pa.roomId) || 0) + 1);
-      doctorTimeSlotCounts.get(pa.doctorId)?.set(pa.timeSlot, (doctorTimeSlotCounts.get(pa.doctorId)?.get(pa.timeSlot) || 0) + 1);
-      doctorLastRoom.get(pa.doctorId)?.set(pa.date, pa.roomId);
-
-      if (slot?.requiresNextDayRest) {
-        const nextDay = parseDateLocal(pa.date);
-        nextDay.setDate(nextDay.getDate() + 1);
-        const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-        doctorRestDays.get(pa.doctorId)?.add(nextDayStr);
-      }
-      if (slot?.isFullDayExclusive) {
-        doctorExclusiveDays.get(pa.doctorId)?.add(pa.date);
-      }
-    }
-
-    const processedRequirementIds = new Set<string>();
-    
-    // First: assign day groups (highest priority - specific days must be worked together)
-    this.assignDayGroupRequirements(
-      requirements, assignments, doctorShiftCounts, doctorWeekendCounts, doctorCriticalCounts,
-      doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays,
-      processedRequirementIds, seededRandom
-    );
-
-    // Second: assign consecutive shifts (N shifts in a row per doctor)
-    this.assignConsecutiveShiftsRequirements(
-      requirements, assignments, doctorShiftCounts, doctorWeekendCounts, doctorCriticalCounts,
-      doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays,
-      processedRequirementIds, seededRandom
-    );
-
-    const remainingRequirements = requirements.filter(req => 
-      !processedRequirementIds.has(`${req.date}-${req.roomId}-${req.timeSlot}`)
-    );
-
-    const criticalRequirements = remainingRequirements.filter(req => req.isCritical);
-    const nonCriticalRequirements = remainingRequirements.filter(req => !req.isCritical);
-
-    const groupByDate = (reqs: SlotRequirement[]) => {
-      const grouped = new Map<string, SlotRequirement[]>();
-      for (const req of reqs) {
-        if (!grouped.has(req.date)) {
-          grouped.set(req.date, []);
-        }
-        grouped.get(req.date)!.push(req);
-      }
-      return grouped;
-    };
-
-    const criticalByDate = groupByDate(criticalRequirements);
-    const nonCriticalByDate = groupByDate(nonCriticalRequirements);
-
-    const allDates = [...new Set([...criticalByDate.keys(), ...nonCriticalByDate.keys()])].sort();
-
-    for (const date of allDates) {
-      const dateCritical = criticalByDate.get(date) || [];
-      const dateNonCritical = nonCriticalByDate.get(date) || [];
-
-      const sortedCritical = [...dateCritical].sort((a, b) => {
-        if (a.isWeekendOrHoliday !== b.isWeekendOrHoliday) {
-          return a.isWeekendOrHoliday ? -1 : 1;
-        }
-        return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
-      });
-
-      const sortedNonCritical = [...dateNonCritical].sort((a, b) => {
-        if (a.isWeekendOrHoliday !== b.isWeekendOrHoliday) {
-          return a.isWeekendOrHoliday ? -1 : 1;
-        }
-        return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
-      });
-
-      for (const requirement of sortedCritical) {
-        this.assignToRequirement(
-          requirement, assignments, doctorShiftCounts, doctorWeekendCounts,
-          doctorCriticalCounts, doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays,
-          seededRandom
-        );
-      }
-
-      for (const requirement of sortedNonCritical) {
-        this.assignToRequirement(
-          requirement, assignments, doctorShiftCounts, doctorWeekendCounts,
-          doctorCriticalCounts, doctorRoomCounts, doctorTimeSlotCounts, doctorLastRoom, doctorRestDays, doctorExclusiveDays,
-          seededRandom
-        );
-      }
-    }
+    // I blocchi a rotazione vengono prima di tutto: impegnano un medico per
+    // più giorni consecutivi, e assegnarli a giochi fatti lascerebbe soltanto
+    // gli scarti fra i turni già distribuiti.
+    this.assignRotationalBlocks(assignments, covered, ledger, random);
+    this.assignCycles(assignments, covered, ledger, random);
+    this.assignDayGroups(assignments, covered, ledger, random);
+    this.assignConsecutiveBlocks(assignments, covered, ledger, random);
+    this.assignRemaining(assignments, covered, ledger, random);
 
     return assignments.sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date);
-      if (dateCompare !== 0) return dateCompare;
-      return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return this.shiftTypes.compare(a.shiftTypeId, b.shiftTypeId);
     });
   }
 
-  private assignDayGroupRequirements(
-    requirements: SlotRequirement[],
-    assignments: Assignment[],
-    doctorShiftCounts: Map<string, number>,
-    doctorWeekendCounts: Map<string, number>,
-    doctorCriticalCounts: Map<string, number>,
-    doctorRoomCounts: Map<string, Map<string, number>>,
-    doctorTimeSlotCounts: Map<string, Map<TimeSlot, number>>,
-    doctorLastRoom: Map<string, Map<string, string>>,
-    doctorRestDays: Map<string, Set<string>>,
-    doctorExclusiveDays: Map<string, Set<string>>,
-    processedRequirementIds: Set<string>,
-    seededRandom: () => number
-  ): void {
+  private requirementFor(assignment: Assignment): SlotRequirement | undefined {
+    return this.requirementsByKey.get(requirementKey(assignment));
+  }
+
+  private schemeFor(room: OperativeRoom): ShiftScheme | null {
+    if (!room.cycle) return null;
+    const scheme = this.schemes.find(candidate => candidate.id === room.cycle!.schemeId);
+    if (!scheme || scheme.steps.length === 0) return null;
+    return isSchemeUsable(scheme, this.shiftTypes) ? scheme : null;
+  }
+
+  private cycleAnchor(room: OperativeRoom): string {
+    return room.cycle?.startDate || buildISODate(this.config.year, this.config.month, 1);
+  }
+
+  private markCycleRestDays(ledger: DoctorLedger): void {
     for (const room of this.rooms) {
-      const dayGroups = room.dayGroups || [];
-      if (dayGroups.length === 0) continue;
+      if (getRotationMode(room) !== 'cycle') continue;
+      const scheme = this.schemeFor(room);
+      if (!scheme) continue;
 
-      for (const dayGroup of dayGroups) {
-        if (dayGroup.days.length === 0) continue;
-
-        const groupInstances = this.findDayGroupInstances(dayGroup, room.id, requirements);
-
-        for (const instance of groupInstances) {
-          const instanceRequirements = instance.requirements;
-          if (instanceRequirements.length === 0) continue;
-
-          // Filter out requirements already satisfied by pre-filled assignments
-          const unresolvedReqs = instanceRequirements.filter(
-            req => !assignments.some(a => a.locked && a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot)
+      const anchor = this.cycleAnchor(room);
+      room.cycle!.doctorIds.forEach((doctorId, doctorIndex) => {
+        for (const date of this.monthDates) {
+          const current = cycleStepFor(
+            scheme, doctorIndex, room.cycle!.offsetStep, anchor, date,
           );
-          if (unresolvedReqs.length === 0) {
-            for (const req of instanceRequirements) {
-              processedRequirementIds.add(`${req.date}-${req.roomId}-${req.timeSlot}`);
-            }
-            continue;
-          }
-
-          const doctor = this.findBestDoctorForDayGroup(
-            unresolvedReqs, assignments, doctorShiftCounts, doctorWeekendCounts,
-            doctorCriticalCounts, doctorRoomCounts, doctorRestDays, doctorExclusiveDays,
-            seededRandom
-          );
-
-          if (!doctor) continue;
-
-          for (const req of unresolvedReqs) {
-            assignments.push({
-              id: generateId(),
-              date: req.date,
-              roomId: req.roomId,
-              roomName: req.roomName,
-              timeSlot: req.timeSlot,
-              doctorId: doctor.id,
-              doctorName: doctor.name,
-            });
-
-            doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
-            if (req.isWeekendOrHoliday) {
-              doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
-            }
-            if (req.isCritical) {
-              doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
-            }
-            doctorRoomCounts.get(doctor.id)!.set(req.roomId, (doctorRoomCounts.get(doctor.id)!.get(req.roomId) || 0) + 1);
-            doctorTimeSlotCounts.get(doctor.id)!.set(req.timeSlot, (doctorTimeSlotCounts.get(doctor.id)!.get(req.timeSlot) || 0) + 1);
-            doctorLastRoom.get(doctor.id)!.set(req.date, req.roomId);
-            if (req.requiresNextDayRest) {
-              const nextDay = parseDateLocal(req.date);
-              nextDay.setDate(nextDay.getDate() + 1);
-              const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-              doctorRestDays.get(doctor.id)!.add(nextDayStr);
-            }
-            if (req.isFullDayExclusive) {
-              doctorExclusiveDays.get(doctor.id)!.add(req.date);
-            }
-
-            processedRequirementIds.add(`${req.date}-${req.roomId}-${req.timeSlot}`);
-          }
+          if (current && current.step.kind !== 'shift') ledger.markOff(doctorId, date);
         }
-      }
-    }
-  }
-
-  private findDayGroupInstances(
-    dayGroup: DayGroup,
-    roomId: string,
-    requirements: SlotRequirement[]
-  ): { startDate: string; requirements: SlotRequirement[] }[] {
-    const roomRequirements = requirements.filter(r => r.roomId === roomId);
-    const sortedGroupDays = [...dayGroup.days].sort((a, b) => 
-      WEEKDAYS.indexOf(a) - WEEKDAYS.indexOf(b)
-    );
-
-    if (sortedGroupDays.length === 0) return [];
-
-    const instances: { startDate: string; requirements: SlotRequirement[] }[] = [];
-    const daysInMonth = new Date(this.config.year, this.config.month, 0).getDate();
-    const processedDates = new Set<string>();
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(this.config.year, this.config.month - 1, day);
-      const weekday = this.getWeekday(date);
-      const dateStr = `${this.config.year}-${String(this.config.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
-      if (processedDates.has(dateStr)) continue;
-
-      if (dayGroup.days.includes(weekday)) {
-        const instanceDates: string[] = [];
-        const tempDate = new Date(date);
-
-        while (dayGroup.days.includes(this.getWeekday(tempDate))) {
-          const tempDateStr = `${tempDate.getFullYear()}-${String(tempDate.getMonth() + 1).padStart(2, '0')}-${String(tempDate.getDate()).padStart(2, '0')}`;
-          
-          if (tempDate.getMonth() + 1 !== this.config.month) break;
-          
-          instanceDates.push(tempDateStr);
-          processedDates.add(tempDateStr);
-          tempDate.setDate(tempDate.getDate() + 1);
-        }
-
-        const instanceReqs = roomRequirements.filter(r => instanceDates.includes(r.date));
-        if (instanceReqs.length > 0) {
-          instances.push({
-            startDate: instanceDates[0],
-            requirements: instanceReqs,
-          });
-        }
-      }
-    }
-
-    return instances;
-  }
-
-  private findBestDoctorForDayGroup(
-    groupRequirements: SlotRequirement[],
-    assignments: Assignment[],
-    doctorShiftCounts: Map<string, number>,
-    _doctorWeekendCounts: Map<string, number>,
-    _doctorCriticalCounts: Map<string, number>,
-    doctorRoomCounts: Map<string, Map<string, number>>,
-    doctorRestDays: Map<string, Set<string>>,
-    doctorExclusiveDays: Map<string, Set<string>>,
-    seededRandom: () => number
-  ): Doctor | null {
-    const groupDates = [...new Set(groupRequirements.map(r => r.date))];
-    const roomId = groupRequirements[0]?.roomId;
-
-    const eligibleDoctors = this.doctors.filter(doctor => {
-      if (doctor.excludedRooms.includes(roomId)) return false;
-
-      for (const req of groupRequirements) {
-        const date = parseDateLocal(req.date);
-        const weekday = this.getWeekday(date);
-        if (doctor.excludedWeekdays.includes(weekday)) return false;
-
-        if (this.isDoctorDateBlocked(doctor.id, req.date, req.timeSlot)) return false;
-
-        const restDays = doctorRestDays.get(doctor.id)!;
-        if (restDays.has(req.date)) return false;
-
-        const exclusiveDays = doctorExclusiveDays.get(doctor.id)!;
-        if (exclusiveDays.has(req.date)) return false;
-      }
-
-      for (const dateStr of groupDates) {
-        const alreadyAssignedThisRoom = assignments.some(
-          a => a.date === dateStr && a.roomId === roomId && a.doctorId === doctor.id
-        );
-        if (alreadyAssignedThisRoom) return false;
-      }
-
-      return true;
-    });
-
-    if (eligibleDoctors.length === 0) return null;
-
-    const randomFactors = new Map<string, number>();
-    for (const doctor of eligibleDoctors) {
-      randomFactors.set(doctor.id, seededRandom());
-    }
-
-    const sortedDoctors = [...eligibleDoctors].sort((a, b) => {
-      const aShifts = doctorShiftCounts.get(a.id) || 0;
-      const bShifts = doctorShiftCounts.get(b.id) || 0;
-      if (aShifts !== bShifts) return aShifts - bShifts;
-
-      const aRoomCount = doctorRoomCounts.get(a.id)!.get(roomId) || 0;
-      const bRoomCount = doctorRoomCounts.get(b.id)!.get(roomId) || 0;
-      if (aRoomCount !== bRoomCount) return aRoomCount - bRoomCount;
-
-      return (randomFactors.get(a.id) || 0) - (randomFactors.get(b.id) || 0);
-    });
-
-    return sortedDoctors[0] || null;
-  }
-
-  private assignConsecutiveShiftsRequirements(
-    requirements: SlotRequirement[],
-    assignments: Assignment[],
-    doctorShiftCounts: Map<string, number>,
-    doctorWeekendCounts: Map<string, number>,
-    doctorCriticalCounts: Map<string, number>,
-    doctorRoomCounts: Map<string, Map<string, number>>,
-    doctorTimeSlotCounts: Map<string, Map<TimeSlot, number>>,
-    doctorLastRoom: Map<string, Map<string, string>>,
-    doctorRestDays: Map<string, Set<string>>,
-    doctorExclusiveDays: Map<string, Set<string>>,
-    processedRequirementIds: Set<string>,
-    seededRandom: () => number
-  ): void {
-    for (const room of this.rooms) {
-      const consecutiveShifts = room.consecutiveShifts;
-      if (!consecutiveShifts || consecutiveShifts <= 0) continue;
-      // Skip if room has day groups (they take precedence and are mutually exclusive)
-      if ((room.dayGroups || []).length > 0) continue;
-
-      // Get all requirements for this room, sorted chronologically
-      const roomRequirements = requirements.filter(r => r.roomId === room.id);
-      if (roomRequirements.length === 0) continue;
-
-      const sortedRequirements = [...roomRequirements].sort((a, b) => {
-        const dateCompare = a.date.localeCompare(b.date);
-        if (dateCompare !== 0) return dateCompare;
-        return TIME_SLOT_ORDER[a.timeSlot] - TIME_SLOT_ORDER[b.timeSlot];
       });
+    }
+  }
 
-      // Filter out requirements already satisfied by pre-filled assignments
-      const expandedSlots: { req: SlotRequirement; slotIndex: number }[] = [];
-      for (const req of sortedRequirements) {
-        const hasLocked = assignments.some(
-          a => a.locked && a.date === req.date && a.roomId === req.roomId && a.timeSlot === req.timeSlot
-        );
-        if (!hasLocked) {
-          expandedSlots.push({ req, slotIndex: 0 });
-        }
+  /**
+   * Fasce a rotazione (diurnismo e simili): i turni della stessa fascia che
+   * cadono nello stesso blocco e nella stessa sala vanno tutti allo stesso
+   * medico, e il blocco conta come una unità sola nell'equità.
+   */
+  private assignRotationalBlocks(
+    assignments: Assignment[],
+    covered: Set<string>,
+    ledger: DoctorLedger,
+    random: () => number,
+  ): void {
+    for (const shiftType of this.shiftTypes.rotational) {
+      const blocks = new Map<string, SlotRequirement[]>();
+
+      for (const requirement of this.requirements) {
+        if (requirement.shiftTypeId !== shiftType.id) continue;
+        if (covered.has(requirementKey(requirement))) continue;
+
+        const key = `${requirement.roomId}|${blockIndexOf(shiftType, requirement.date)}`;
+        const bucket = blocks.get(key);
+        if (bucket) bucket.push(requirement);
+        else blocks.set(key, [requirement]);
       }
 
-      // Group expanded slots into blocks
-      // If a start day is specified, group by week boundaries aligned to that day
-      const blocks: { req: SlotRequirement; slotIndex: number }[][] = [];
-      if (room.consecutiveStartDay) {
-        const startDayIndex = WEEKDAYS.indexOf(room.consecutiveStartDay);
-        let currentBlock: { req: SlotRequirement; slotIndex: number }[] = [];
-        let currentBlockStartDate: string | null = null;
+      const ordered = [...blocks.entries()].sort((a, b) =>
+        a[1][0].date < b[1][0].date ? -1 : a[1][0].date > b[1][0].date ? 1 : 0);
 
-        for (const slot of expandedSlots) {
-          const date = parseDateLocal(slot.req.date);
-          // Calculate which "week" this date belongs to, relative to the start day
-          const dayOfWeek = (date.getDay() + 6) % 7; // Monday=0 ... Sunday=6
-          const isNewBlock = currentBlockStartDate !== null && (
-            dayOfWeek === startDayIndex && slot.req.date !== currentBlockStartDate
-          );
+      for (const [, block] of ordered) {
+        block.sort(this.byChronology);
+        const blockIndex = blockIndexOf(shiftType, block[0].date);
 
-          if (isNewBlock && currentBlock.length > 0) {
-            blocks.push(currentBlock);
-            currentBlock = [];
-          }
-
-          if (currentBlock.length === 0) {
-            currentBlockStartDate = slot.req.date;
-          }
-          currentBlock.push(slot);
-        }
-        if (currentBlock.length > 0) {
-          blocks.push(currentBlock);
-        }
-      } else {
-        // Simple fixed-size blocks
-        for (let blockStart = 0; blockStart < expandedSlots.length; blockStart += consecutiveShifts) {
-          blocks.push(expandedSlots.slice(blockStart, blockStart + consecutiveShifts));
-        }
-      }
-
-      for (const blockSlots of blocks) {
-        if (blockSlots.length === 0) continue;
-
-        // Find best doctor for this block
-        const doctor = this.findBestDoctorForConsecutiveBlock(
-          blockSlots.map(s => s.req),
-          assignments,
-          doctorShiftCounts,
-          doctorWeekendCounts,
-          doctorCriticalCounts,
-          doctorRoomCounts,
-          doctorRestDays,
-          doctorExclusiveDays,
-          seededRandom
-        );
-
+        const doctor = this.pickDoctorForRotationalBlock(block, shiftType.id, blockIndex, ledger, random);
         if (!doctor) continue;
 
-        // Assign doctor to all slots in this block
-        for (const { req } of blockSlots) {
-          // Check if already assigned (same doctor to same slot)
-          const alreadyAssigned = assignments.some(
-            a => a.date === req.date && a.roomId === req.roomId &&
-                 a.timeSlot === req.timeSlot && a.doctorId === doctor.id
-          );
-          
-          if (alreadyAssigned) continue;
-
-          assignments.push({
-            id: generateId(),
-            date: req.date,
-            roomId: req.roomId,
-            roomName: req.roomName,
-            timeSlot: req.timeSlot,
-            doctorId: doctor.id,
-            doctorName: doctor.name,
-          });
-
-          doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
-          if (req.isWeekendOrHoliday) {
-            doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
-          }
-          if (req.isCritical) {
-            doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
-          }
-          doctorRoomCounts.get(doctor.id)!.set(req.roomId, (doctorRoomCounts.get(doctor.id)!.get(req.roomId) || 0) + 1);
-          doctorTimeSlotCounts.get(doctor.id)!.set(req.timeSlot, (doctorTimeSlotCounts.get(doctor.id)!.get(req.timeSlot) || 0) + 1);
-          doctorLastRoom.get(doctor.id)!.set(req.date, req.roomId);
-          if (req.requiresNextDayRest) {
-            const nextDay = parseDateLocal(req.date);
-            nextDay.setDate(nextDay.getDate() + 1);
-            const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-            doctorRestDays.get(doctor.id)!.add(nextDayStr);
-          }
-          if (req.isFullDayExclusive) {
-            doctorExclusiveDays.get(doctor.id)!.add(req.date);
-          }
-
-          processedRequirementIds.add(`${req.date}-${req.roomId}-${req.timeSlot}`);
+        let assigned = 0;
+        for (const requirement of block) {
+          if (!this.isEligible(doctor, requirement, ledger)) continue;
+          this.commit(doctor, requirement, assignments, covered, ledger);
+          assigned++;
         }
+
+        if (assigned > 0) ledger.recordBlock(doctor.id, shiftType.id, blockIndex);
       }
     }
   }
 
-  private findBestDoctorForConsecutiveBlock(
-    blockRequirements: SlotRequirement[],
-    assignments: Assignment[],
-    doctorShiftCounts: Map<string, number>,
-    _doctorWeekendCounts: Map<string, number>,
-    _doctorCriticalCounts: Map<string, number>,
-    doctorRoomCounts: Map<string, Map<string, number>>,
-    doctorRestDays: Map<string, Set<string>>,
-    doctorExclusiveDays: Map<string, Set<string>>,
-    seededRandom: () => number
+  /**
+   * Medico a cui affidare un blocco a rotazione. Vince chi ne ha fatti meno
+   * finora (mesi precedenti compresi); chi ha già iniziato il blocco nel mese
+   * scorso lo completa, per non spezzare una settimana a metà.
+   */
+  private pickDoctorForRotationalBlock(
+    block: SlotRequirement[],
+    shiftTypeId: string,
+    blockIndex: number,
+    ledger: DoctorLedger,
+    random: () => number,
   ): Doctor | null {
-    const roomId = blockRequirements[0]?.roomId;
-
-    const eligibleDoctors = this.doctors.filter(doctor => {
-      if (doctor.excludedRooms.includes(roomId)) return false;
-
-      for (const req of blockRequirements) {
-        const date = parseDateLocal(req.date);
-        const weekday = this.getWeekday(date);
-        if (doctor.excludedWeekdays.includes(weekday)) return false;
-
-        if (this.isDoctorDateBlocked(doctor.id, req.date, req.timeSlot)) return false;
-
-        const restDays = doctorRestDays.get(doctor.id)!;
-        if (restDays.has(req.date)) return false;
-
-        const exclusiveDays = doctorExclusiveDays.get(doctor.id)!;
-        if (exclusiveDays.has(req.date)) return false;
-
-        // Check if already assigned to same time slot on same day
-        const alreadyAssignedSameSlot = assignments.some(
-          a => a.date === req.date && a.timeSlot === req.timeSlot && a.doctorId === doctor.id
-        );
-        if (alreadyAssignedSameSlot) return false;
-
-        // Check full day exclusive constraint
-        if (req.isFullDayExclusive) {
-          const hasOtherShiftsSameDay = assignments.some(
-            a => a.date === req.date && a.doctorId === doctor.id
-          );
-          if (hasOtherShiftsSameDay) return false;
-        }
-      }
-
-      return true;
-    });
-
-    if (eligibleDoctors.length === 0) return null;
-
-    // Add random factor for variation
-    const randomFactors = new Map<string, number>();
-    for (const doctor of eligibleDoctors) {
-      randomFactors.set(doctor.id, seededRandom());
+    const inherited = this.inheritedBlockOwners.get(`${shiftTypeId}|${blockIndex}`);
+    if (inherited) {
+      const owner = this.doctorById.get(inherited);
+      const canContinue = owner
+        && block.some(requirement => this.isEligible(owner, requirement, ledger));
+      if (owner && canContinue) return owner;
     }
 
-    const sortedDoctors = [...eligibleDoctors].sort((a, b) => {
-      const aShifts = doctorShiftCounts.get(a.id) || 0;
-      const bShifts = doctorShiftCounts.get(b.id) || 0;
-      if (aShifts !== bShifts) return aShifts - bShifts;
+    const candidates = this.doctors
+      .map(doctor => ({
+        doctor,
+        eligible: block.filter(requirement => this.isEligible(doctor, requirement, ledger)).length,
+        tiebreak: random(),
+      }))
+      .filter(candidate => candidate.eligible > 0);
 
-      const aRoomCount = doctorRoomCounts.get(a.id)!.get(roomId) || 0;
-      const bRoomCount = doctorRoomCounts.get(b.id)!.get(roomId) || 0;
-      if (aRoomCount !== bRoomCount) return aRoomCount - bRoomCount;
+    if (candidates.length === 0) return null;
 
-      return (randomFactors.get(a.id) || 0) - (randomFactors.get(b.id) || 0);
+    // Chi copre solo un paio di giorni su cinque non è un buon titolare del
+    // blocco: si preferiscono i medici che riescono a coprirlo quasi tutto.
+    const best = Math.max(...candidates.map(candidate => candidate.eligible));
+    const threshold = Math.max(1, Math.ceil(best * 0.6));
+    const shortlist = candidates.filter(candidate => candidate.eligible >= threshold);
+
+    shortlist.sort((a, b) => {
+      const blocks = ledger.blocks(a.doctor.id, shiftTypeId) - ledger.blocks(b.doctor.id, shiftTypeId);
+      if (blocks !== 0) return blocks;
+
+      if (a.eligible !== b.eligible) return b.eligible - a.eligible;
+
+      const shifts = ledger.shifts(a.doctor.id) - ledger.shifts(b.doctor.id);
+      if (shifts !== 0) return shifts;
+
+      return a.tiebreak - b.tiebreak;
     });
 
-    return sortedDoctors[0] || null;
+    return shortlist[0].doctor;
   }
 
-  private assignToRequirement(
+  /** Rotazione ciclica: ogni medico segue la propria posizione nello schema. */
+  private assignCycles(
+    assignments: Assignment[],
+    covered: Set<string>,
+    ledger: DoctorLedger,
+    random: () => number,
+  ): void {
+    for (const room of this.rooms) {
+      if (getRotationMode(room) !== 'cycle') continue;
+      const scheme = this.schemeFor(room);
+      if (!scheme) continue;
+
+      const anchor = this.cycleAnchor(room);
+      const { doctorIds, offsetStep } = room.cycle!;
+
+      for (const date of this.monthDates) {
+        // L'ordine di scansione ruota con la data: senza questo, quando due
+        // medici cadono sullo stesso passo sarebbe sempre il primo
+        // dell'elenco a prendersi il turno.
+        const order = rotate(
+          doctorIds.map((_, index) => index),
+          Math.floor(random() * Math.max(1, doctorIds.length)),
+        );
+
+        for (const doctorIndex of order) {
+          const current = cycleStepFor(scheme, doctorIndex, offsetStep, anchor, date);
+          if (!current || current.step.kind !== 'shift') continue;
+
+          const requirement = this.requirementsByKey.get(
+            requirementKey({ date, roomId: room.id, shiftTypeId: current.step.shiftTypeId }),
+          );
+          if (!requirement || covered.has(requirementKey(requirement))) continue;
+
+          const doctor = this.doctorById.get(doctorIds[doctorIndex]);
+          if (!doctor) continue;
+          if (!this.isEligible(doctor, requirement, ledger, { ignoreOffDay: true })) continue;
+
+          this.commit(doctor, requirement, assignments, covered, ledger);
+        }
+      }
+    }
+  }
+
+  /** Gruppi di giorni: lo stesso medico copre tutti i giorni del gruppo. */
+  private assignDayGroups(
+    assignments: Assignment[],
+    covered: Set<string>,
+    ledger: DoctorLedger,
+    random: () => number,
+  ): void {
+    for (const room of this.rooms) {
+      if (getRotationMode(room) !== 'dayGroups') continue;
+
+      for (const group of room.dayGroups) {
+        if (group.days.length === 0) continue;
+
+        for (const week of this.groupInstances(room, group)) {
+          const pending = week.filter(requirement => !covered.has(requirementKey(requirement)));
+          if (pending.length === 0) continue;
+
+          const doctor = this.pickDoctorForBlock(pending, ledger, random);
+          if (!doctor) continue;
+
+          for (const requirement of pending) {
+            if (!this.isEligible(doctor, requirement, ledger)) continue;
+            this.commit(doctor, requirement, assignments, covered, ledger);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Istanze di un gruppo di giorni, una per settimana di calendario: così un
+   * gruppo non contiguo (es. lunedì + mercoledì) resta un unico blocco
+   * affidato allo stesso medico.
+   */
+  private groupInstances(room: OperativeRoom, group: DayGroup): SlotRequirement[][] {
+    const weeks = new Map<number, SlotRequirement[]>();
+    const days = new Set<Weekday>(group.days);
+
+    for (const requirement of this.requirements) {
+      if (requirement.roomId !== room.id) continue;
+      if (!days.has(requirement.weekday)) continue;
+
+      const weekIndex = this.weekIndexOf(requirement.date);
+      const bucket = weeks.get(weekIndex);
+      if (bucket) bucket.push(requirement);
+      else weeks.set(weekIndex, [requirement]);
+    }
+
+    return [...weeks.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, bucket]) => bucket.sort(this.byChronology));
+  }
+
+  /** Settimana del mese a cui appartiene la data, con inizio al lunedì. */
+  private weekIndexOf(date: string): number {
+    const offsetOfFirstDay = mondayFirstIndex(
+      buildISODate(this.config.year, this.config.month, 1),
+    );
+    const dayOfMonth = Number(date.slice(8, 10));
+    return Math.floor((dayOfMonth - 1 + offsetOfFirstDay) / 7);
+  }
+
+  /** Turni consecutivi: blocchi di N turni, o settimanali se ancorati a un giorno. */
+  private assignConsecutiveBlocks(
+    assignments: Assignment[],
+    covered: Set<string>,
+    ledger: DoctorLedger,
+    random: () => number,
+  ): void {
+    for (const room of this.rooms) {
+      if (getRotationMode(room) !== 'consecutive') continue;
+
+      const pending = this.requirements
+        .filter(requirement => requirement.roomId === room.id)
+        .filter(requirement => !covered.has(requirementKey(requirement)))
+        .sort(this.byChronology);
+      if (pending.length === 0) continue;
+
+      const blocks = room.consecutiveStartDay
+        ? splitByWeekday(pending, room.consecutiveStartDay)
+        : chunk(pending, room.consecutiveShifts!);
+
+      for (const block of blocks) {
+        const doctor = this.pickDoctorForBlock(block, ledger, random);
+        if (!doctor) continue;
+
+        for (const requirement of block) {
+          if (!this.isEligible(doctor, requirement, ledger)) continue;
+          this.commit(doctor, requirement, assignments, covered, ledger);
+        }
+      }
+    }
+  }
+
+  /** Turni restanti, assegnati privilegiando l'equità del carico. */
+  private assignRemaining(
+    assignments: Assignment[],
+    covered: Set<string>,
+    ledger: DoctorLedger,
+    random: () => number,
+  ): void {
+    const pending = this.requirements
+      .filter(requirement => !covered.has(requirementKey(requirement)))
+      // I turni critici e festivi sono i più difficili da coprire: vengono
+      // assegnati per primi, quando ci sono ancora medici disponibili.
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+        if (a.isCritical !== b.isCritical) return a.isCritical ? -1 : 1;
+        if (a.isWeekendOrHoliday !== b.isWeekendOrHoliday) return a.isWeekendOrHoliday ? -1 : 1;
+        return this.shiftTypes.compare(a.shiftTypeId, b.shiftTypeId);
+      });
+
+    for (const requirement of pending) {
+      if (covered.has(requirementKey(requirement))) continue;
+
+      const doctor = this.pickDoctor(requirement, ledger, random);
+      if (!doctor) continue;
+
+      this.commit(doctor, requirement, assignments, covered, ledger);
+    }
+  }
+
+  private commit(
+    doctor: Doctor,
     requirement: SlotRequirement,
     assignments: Assignment[],
-    doctorShiftCounts: Map<string, number>,
-    doctorWeekendCounts: Map<string, number>,
-    doctorCriticalCounts: Map<string, number>,
-    doctorRoomCounts: Map<string, Map<string, number>>,
-    doctorTimeSlotCounts: Map<string, Map<TimeSlot, number>>,
-    doctorLastRoom: Map<string, Map<string, string>>,
-    doctorRestDays: Map<string, Set<string>>,
-    doctorExclusiveDays: Map<string, Set<string>>,
-    seededRandom: () => number
+    covered: Set<string>,
+    ledger: DoctorLedger,
   ): void {
-    const date = parseDateLocal(requirement.date);
-    const weekday = this.getWeekday(date);
-
-    const eligibleDoctors = this.doctors.filter(doctor => {
-      if (doctor.excludedRooms.includes(requirement.roomId)) return false;
-      if (doctor.excludedWeekdays.includes(weekday)) return false;
-
-      if (this.isDoctorDateBlocked(doctor.id, requirement.date, requirement.timeSlot)) return false;
-
-      const restDays = doctorRestDays.get(doctor.id)!;
-      if (restDays.has(requirement.date)) return false;
-
-      const exclusiveDays = doctorExclusiveDays.get(doctor.id)!;
-      if (exclusiveDays.has(requirement.date)) return false;
-
-      const alreadyAssignedSameSlot = assignments.some(
-        assignment => assignment.date === requirement.date &&
-          assignment.doctorId === doctor.id &&
-          assignment.timeSlot === requirement.timeSlot
-      );
-      if (alreadyAssignedSameSlot) return false;
-
-      if (requirement.isFullDayExclusive) {
-        const hasOtherShiftsSameDay = assignments.some(
-          assignment => assignment.date === requirement.date && assignment.doctorId === doctor.id
-        );
-        if (hasOtherShiftsSameDay) return false;
-      }
-
-      return true;
-    });
-
-    const randomFactors = new Map<string, number>();
-    for (const doctor of eligibleDoctors) {
-      randomFactors.set(doctor.id, seededRandom());
-    }
-
-    const sortedDoctors = [...eligibleDoctors].sort((a, b) => {
-      if (requirement.isCritical) {
-        const aCritical = doctorCriticalCounts.get(a.id) || 0;
-        const bCritical = doctorCriticalCounts.get(b.id) || 0;
-        if (aCritical !== bCritical) return aCritical - bCritical;
-      }
-
-      if (requirement.isWeekendOrHoliday) {
-        const aWeekends = doctorWeekendCounts.get(a.id) || 0;
-        const bWeekends = doctorWeekendCounts.get(b.id) || 0;
-        if (aWeekends !== bWeekends) return aWeekends - bWeekends;
-      }
-
-      const aLastRoomOnDate = doctorLastRoom.get(a.id)?.get(requirement.date);
-      const bLastRoomOnDate = doctorLastRoom.get(b.id)?.get(requirement.date);
-      const aSameRoom = aLastRoomOnDate === requirement.roomId ? 1 : 0;
-      const bSameRoom = bLastRoomOnDate === requirement.roomId ? 1 : 0;
-      if (aSameRoom !== bSameRoom) return bSameRoom - aSameRoom;
-
-      const aShifts = doctorShiftCounts.get(a.id) || 0;
-      const bShifts = doctorShiftCounts.get(b.id) || 0;
-      if (aShifts !== bShifts) return aShifts - bShifts;
-
-      const aRoomCount = doctorRoomCounts.get(a.id)!.get(requirement.roomId) || 0;
-      const bRoomCount = doctorRoomCounts.get(b.id)!.get(requirement.roomId) || 0;
-      if (aRoomCount !== bRoomCount) return aRoomCount - bRoomCount;
-
-      const aTimeSlotCount = doctorTimeSlotCounts.get(a.id)!.get(requirement.timeSlot) || 0;
-      const bTimeSlotCount = doctorTimeSlotCounts.get(b.id)!.get(requirement.timeSlot) || 0;
-      if (aTimeSlotCount !== bTimeSlotCount) return aTimeSlotCount - bTimeSlotCount;
-
-      return (randomFactors.get(a.id) || 0) - (randomFactors.get(b.id) || 0);
-    });
-
-    // Skip if already satisfied by a pre-filled assignment
-    const hasLocked = assignments.some(
-      a => a.locked && a.date === requirement.date && a.roomId === requirement.roomId && a.timeSlot === requirement.timeSlot
-    );
-    if (hasLocked || sortedDoctors.length === 0) return;
-
-    const doctor = sortedDoctors[0];
-    assignments.push({
+    const assignment: Assignment = {
       id: generateId(),
       date: requirement.date,
       roomId: requirement.roomId,
       roomName: requirement.roomName,
-      timeSlot: requirement.timeSlot,
+      shiftTypeId: requirement.shiftTypeId,
       doctorId: doctor.id,
       doctorName: doctor.name,
-    });
+    };
 
-    doctorShiftCounts.set(doctor.id, (doctorShiftCounts.get(doctor.id) || 0) + 1);
-
-    if (requirement.isWeekendOrHoliday) {
-      doctorWeekendCounts.set(doctor.id, (doctorWeekendCounts.get(doctor.id) || 0) + 1);
-    }
-
-    if (requirement.isCritical) {
-      doctorCriticalCounts.set(doctor.id, (doctorCriticalCounts.get(doctor.id) || 0) + 1);
-    }
-
-    const roomCounts = doctorRoomCounts.get(doctor.id)!;
-    roomCounts.set(requirement.roomId, (roomCounts.get(requirement.roomId) || 0) + 1);
-
-    const timeSlotCounts = doctorTimeSlotCounts.get(doctor.id)!;
-    timeSlotCounts.set(requirement.timeSlot, (timeSlotCounts.get(requirement.timeSlot) || 0) + 1);
-
-    doctorLastRoom.get(doctor.id)!.set(requirement.date, requirement.roomId);
-
-    if (requirement.requiresNextDayRest) {
-      const nextDay = parseDateLocal(requirement.date);
-      nextDay.setDate(nextDay.getDate() + 1);
-      const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
-      doctorRestDays.get(doctor.id)!.add(nextDayStr);
-    }
-
-    if (requirement.isFullDayExclusive) {
-      doctorExclusiveDays.get(doctor.id)!.add(requirement.date);
-    }
+    assignments.push(assignment);
+    covered.add(requirementKey(requirement));
+    ledger.record(assignment, requirement);
   }
 
-  static calculateStats(schedule: MonthlySchedule, doctors: Doctor[], rooms: OperativeRoom[]): DoctorStats[] {
-    const criticalSlots = new Set<string>();
-    for (const room of rooms) {
-      for (const slot of room.slots) {
-        if (slot.isCritical) {
-          criticalSlots.add(`${room.id}-${slot.timeSlot}`);
-        }
-      }
+  private byChronology = (a: SlotRequirement, b: SlotRequirement): number => {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return this.shiftTypes.compare(a.shiftTypeId, b.shiftTypeId);
+  };
+
+  // -------------------------------------------------------------------------
+  // Scelta del medico
+  // -------------------------------------------------------------------------
+
+  private isEligible(
+    doctor: Doctor,
+    requirement: SlotRequirement,
+    ledger: DoctorLedger,
+    options: { ignoreOffDay?: boolean } = {},
+  ): boolean {
+    if (doctor.excludedRooms.includes(requirement.roomId)) return false;
+    if (doctor.excludedWeekdays.includes(requirement.weekday)) return false;
+    if (this.availability.isBlocked(doctor.id, requirement.date, requirement.shiftTypeId)) return false;
+    if (ledger.isResting(doctor.id, requirement.date)) return false;
+    if (!options.ignoreOffDay && ledger.isOff(doctor.id, requirement.date)) return false;
+    if (ledger.hasExclusiveShift(doctor.id, requirement.date)) return false;
+    if (ledger.isBusy(doctor.id, requirement.date, requirement.shiftTypeId)) return false;
+
+    for (const overlapping of this.shiftTypes.overlapping(requirement.shiftTypeId)) {
+      if (ledger.isBusy(doctor.id, requirement.date, overlapping.id)) return false;
     }
 
-    return doctors.map(doctor => {
-      const doctorAssignments = schedule.assignments.filter(a => a.doctorId === doctor.id);
+    if (requirement.isFullDayExclusive && ledger.dayLoad(doctor.id, requirement.date) > 0) {
+      return false;
+    }
 
-      const shiftsByRoom: Record<string, number> = {};
-      for (const room of rooms) {
-        shiftsByRoom[room.id] = doctorAssignments.filter(a => a.roomId === room.id).length;
+    return true;
+  }
+
+  private pickDoctor(
+    requirement: SlotRequirement,
+    ledger: DoctorLedger,
+    random: () => number,
+  ): Doctor | null {
+    const eligible = this.doctors.filter(doctor => this.isEligible(doctor, requirement, ledger));
+    if (eligible.length === 0) return null;
+
+    const tiebreak = new Map(eligible.map(doctor => [doctor.id, random()]));
+
+    return [...eligible].sort((a, b) => {
+      // Il secondo giorno di riposo è una preferenza, non un divieto: si evita
+      // quando c'è alternativa, ma non lascia il turno scoperto.
+      const aRest = ledger.isOnSecondRest(a.id, requirement.date) ? 1 : 0;
+      const bRest = ledger.isOnSecondRest(b.id, requirement.date) ? 1 : 0;
+      if (aRest !== bRest) return aRest - bRest;
+
+      if (requirement.isCritical) {
+        const difference = ledger.critical(a.id) - ledger.critical(b.id);
+        if (difference !== 0) return difference;
       }
 
-      const shiftsByTimeSlot: Record<TimeSlot, number> = {
-        '08:00-14:00': doctorAssignments.filter(a => a.timeSlot === '08:00-14:00').length,
-        '14:00-20:00': doctorAssignments.filter(a => a.timeSlot === '14:00-20:00').length,
-        '20:00-08:00': doctorAssignments.filter(a => a.timeSlot === '20:00-08:00').length,
-      };
+      if (requirement.isWeekendOrHoliday) {
+        const difference = ledger.weekend(a.id) - ledger.weekend(b.id);
+        if (difference !== 0) return difference;
+      }
 
-      const weekendShifts = doctorAssignments.filter(a => {
-        const date = parseDateLocal(a.date);
-        const dayOfWeek = date.getDay();
-        return dayOfWeek === 0 || dayOfWeek === 6 || schedule.holidays.includes(a.date);
-      }).length;
+      // A parità di carico si preferisce chi è già in questa sala nello stesso
+      // giorno, per non spezzare la giornata fra reparti diversi.
+      const aContinuity = ledger.worksRoomOn(a.id, requirement.date, requirement.roomId) ? 0 : 1;
+      const bContinuity = ledger.worksRoomOn(b.id, requirement.date, requirement.roomId) ? 0 : 1;
+      if (aContinuity !== bContinuity) return aContinuity - bContinuity;
 
-      const criticalShifts = doctorAssignments.filter(a => {
-        return criticalSlots.has(`${a.roomId}-${a.timeSlot}`);
-      }).length;
+      const shifts = ledger.shifts(a.id) - ledger.shifts(b.id);
+      if (shifts !== 0) return shifts;
 
-      const totalHours = doctorAssignments.reduce((sum, a) => {
-        return sum + TIME_SLOT_HOURS[a.timeSlot];
-      }, 0);
+      const room = ledger.room(a.id, requirement.roomId) - ledger.room(b.id, requirement.roomId);
+      if (room !== 0) return room;
 
-      const distinctDays = new Set(doctorAssignments.map(a => a.date)).size;
+      const shiftType =
+        ledger.shiftType(a.id, requirement.shiftTypeId) - ledger.shiftType(b.id, requirement.shiftTypeId);
+      if (shiftType !== 0) return shiftType;
 
-      return {
-        doctorId: doctor.id,
-        doctorName: doctor.name,
-        doctorColor: doctor.color,
-        totalShifts: doctorAssignments.length,
-        totalHours,
-        distinctDays,
-        weekendShifts,
-        criticalShifts,
-        shiftsByRoom,
-        shiftsByTimeSlot,
-      };
-    });
+      return (tiebreak.get(a.id) ?? 0) - (tiebreak.get(b.id) ?? 0);
+    })[0];
   }
+
+  /** Medico per un blocco di turni: deve poter coprire la maggior parte del blocco. */
+  private pickDoctorForBlock(
+    block: SlotRequirement[],
+    ledger: DoctorLedger,
+    random: () => number,
+  ): Doctor | null {
+    const roomId = block[0]?.roomId;
+    if (!roomId) return null;
+
+    const scored = this.doctors
+      .map(doctor => ({
+        doctor,
+        eligible: block.filter(requirement => this.isEligible(doctor, requirement, ledger)).length,
+        tiebreak: random(),
+      }))
+      .filter(candidate => candidate.eligible > 0);
+
+    if (scored.length === 0) return null;
+
+    scored.sort((a, b) => {
+      if (a.eligible !== b.eligible) return b.eligible - a.eligible;
+
+      const shifts = ledger.shifts(a.doctor.id) - ledger.shifts(b.doctor.id);
+      if (shifts !== 0) return shifts;
+
+      const room = ledger.room(a.doctor.id, roomId) - ledger.room(b.doctor.id, roomId);
+      if (room !== 0) return room;
+
+      return a.tiebreak - b.tiebreak;
+    });
+
+    return scored[0].doctor;
+  }
+
+  // -------------------------------------------------------------------------
+  // Statistiche dei mesi precedenti
+  // -------------------------------------------------------------------------
 
   /**
-   * Calculate aggregated stats from prior months of the same year.
-   * Used to balance new month generation based on year-to-date statistics.
+   * Somma le statistiche dei mesi già chiusi dell'anno, per continuare a
+   * bilanciare il carico anche fra mesi diversi.
    */
-  static calculatePriorYearStats(
-    year: number,
-    currentMonth: number,
-    doctors: Doctor[],
-    rooms: OperativeRoom[],
-    getActiveScheduleForMonth: (year: number, month: number) => MonthlySchedule | null
-  ): YearPriorStatsResult {
+  static collectPriorYearStats(options: {
+    year: number;
+    upToMonth: number;
+    doctors: Doctor[];
+    rooms: OperativeRoom[];
+    shiftTypes: ShiftTypeIndex;
+    loadSchedule: (year: number, month: number) => MonthlySchedule | null;
+  }): { stats: DoctorStats[]; monthsCovered: number[] } {
+    const schedules: MonthlySchedule[] = [];
     const monthsCovered: number[] = [];
-    
-    // Initialize aggregated stats for each doctor
-    const aggregatedStats = new Map<string, PriorDoctorStats>();
-    for (const doctor of doctors) {
-      const shiftsByRoom: Record<string, number> = {};
-      for (const room of rooms) {
-        shiftsByRoom[room.id] = 0;
-      }
-      
-      aggregatedStats.set(doctor.id, {
-        doctorId: doctor.id,
-        totalShifts: 0,
-        totalHours: 0,
-        weekendShifts: 0,
-        criticalShifts: 0,
-        shiftsByRoom,
-        shiftsByTimeSlot: {
-          '08:00-14:00': 0,
-          '14:00-20:00': 0,
-          '20:00-08:00': 0,
-        },
-      });
-    }
 
-    // Build set of critical slots
-    const criticalSlots = new Set<string>();
-    for (const room of rooms) {
-      for (const slot of room.slots) {
-        if (slot.isCritical) {
-          criticalSlots.add(`${room.id}-${slot.timeSlot}`);
-        }
-      }
-    }
-
-    // Aggregate stats from months 1 to currentMonth-1 of the same year
-    for (let month = 1; month < currentMonth; month++) {
-      const schedule = getActiveScheduleForMonth(year, month);
+    for (let month = 1; month < options.upToMonth; month++) {
+      const schedule = options.loadSchedule(options.year, month);
       if (!schedule) continue;
-
+      schedules.push(schedule);
       monthsCovered.push(month);
-
-      for (const assignment of schedule.assignments) {
-        const stats = aggregatedStats.get(assignment.doctorId);
-        if (!stats) continue;
-
-        stats.totalShifts++;
-        stats.totalHours += TIME_SLOT_HOURS[assignment.timeSlot];
-
-        // Weekend/holiday shifts
-        const date = parseDateLocal(assignment.date);
-        if (date.getDay() === 0 || date.getDay() === 6 || schedule.holidays.includes(assignment.date)) {
-          stats.weekendShifts++;
-        }
-
-        // Critical shifts
-        if (criticalSlots.has(`${assignment.roomId}-${assignment.timeSlot}`)) {
-          stats.criticalShifts++;
-        }
-
-        // By room
-        if (stats.shiftsByRoom[assignment.roomId] !== undefined) {
-          stats.shiftsByRoom[assignment.roomId]++;
-        }
-
-        // By time slot
-        stats.shiftsByTimeSlot[assignment.timeSlot]++;
-      }
     }
 
-    return {
-      stats: Array.from(aggregatedStats.values()),
-      monthsCovered,
-    };
+    const stats = computeStats(schedules, {
+      doctors: options.doctors,
+      rooms: options.rooms,
+      shiftTypes: options.shiftTypes,
+    });
+
+    return { stats, monthsCovered };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Registro del carico per medico
+// ---------------------------------------------------------------------------
+
+/**
+ * Contatori e vincoli accumulati durante l'assegnazione.
+ *
+ * Tutte le verifiche sono su `Set`/`Map`: la versione precedente rileggeva
+ * l'intero elenco di assegnazioni per ogni candidato, e il costo cresceva col
+ * quadrato dei turni del mese.
+ */
+class DoctorLedger {
+  private readonly shiftCount = new Map<string, number>();
+  private readonly weekendCount = new Map<string, number>();
+  private readonly criticalCount = new Map<string, number>();
+  private readonly roomCount = new Map<string, number>();
+  private readonly shiftTypeCount = new Map<string, number>();
+  private readonly blockCount = new Map<string, number>();
+  private readonly dayCount = new Map<string, number>();
+  private readonly busySlots = new Set<string>();
+  private readonly roomsPerDay = new Set<string>();
+  private readonly restDays = new Set<string>();
+  private readonly secondRestDays = new Set<string>();
+  private readonly exclusiveDays = new Set<string>();
+  private readonly offDays = new Set<string>();
+  private readonly countedBlocks = new Set<string>();
+
+  constructor(doctors: Doctor[], priorStats: Map<string, DoctorStats>) {
+    for (const doctor of doctors) {
+      const prior = priorStats.get(doctor.id);
+      this.shiftCount.set(doctor.id, prior?.totalShifts ?? 0);
+      this.weekendCount.set(doctor.id, prior?.weekendShifts ?? 0);
+      this.criticalCount.set(doctor.id, prior?.criticalShifts ?? 0);
+
+      for (const [roomId, count] of Object.entries(prior?.shiftsByRoom ?? {})) {
+        this.roomCount.set(`${doctor.id}|${roomId}`, count);
+      }
+      for (const [shiftTypeId, count] of Object.entries(prior?.shiftsByShiftType ?? {})) {
+        this.shiftTypeCount.set(`${doctor.id}|${shiftTypeId}`, count);
+      }
+      // I blocchi già fatti nei mesi precedenti fanno parte del conteggio:
+      // è quello che rende equa la rotazione del diurnismo sull'anno.
+      for (const [shiftTypeId, count] of Object.entries(prior?.blocksByShiftType ?? {})) {
+        this.blockCount.set(`${doctor.id}|${shiftTypeId}`, count);
+      }
+    }
+  }
+
+  record(assignment: Assignment, requirement: SlotRequirement | undefined): void {
+    const { doctorId, date } = assignment;
+
+    bump(this.shiftCount, doctorId);
+    bump(this.dayCount, `${doctorId}|${date}`);
+    bump(this.roomCount, `${doctorId}|${assignment.roomId}`);
+    bump(this.shiftTypeCount, `${doctorId}|${assignment.shiftTypeId}`);
+    this.busySlots.add(`${doctorId}|${date}|${assignment.shiftTypeId}`);
+    this.roomsPerDay.add(`${doctorId}|${date}|${assignment.roomId}`);
+
+    if (!requirement) return;
+
+    if (requirement.isWeekendOrHoliday) bump(this.weekendCount, doctorId);
+    if (requirement.isCritical) bump(this.criticalCount, doctorId);
+    if (requirement.requiresNextDayRest) this.restDays.add(`${doctorId}|${addDays(date, 1)}`);
+    if (requirement.requiresSecondDayRest) this.secondRestDays.add(`${doctorId}|${addDays(date, 2)}`);
+    if (requirement.isFullDayExclusive) this.exclusiveDays.add(`${doctorId}|${date}`);
+  }
+
+  markOff(doctorId: string, date: string): void {
+    this.offDays.add(`${doctorId}|${date}`);
+  }
+
+  /** Registra un blocco a rotazione completato, indipendentemente dai giorni. */
+  recordBlock(doctorId: string, shiftTypeId: string, blockIndex: number): void {
+    const key = `${doctorId}|${shiftTypeId}|${blockIndex}`;
+    if (this.countedBlocks.has(key)) return;
+    this.countedBlocks.add(key);
+    bump(this.blockCount, `${doctorId}|${shiftTypeId}`);
+  }
+
+  shifts = (doctorId: string) => this.shiftCount.get(doctorId) ?? 0;
+  weekend = (doctorId: string) => this.weekendCount.get(doctorId) ?? 0;
+  critical = (doctorId: string) => this.criticalCount.get(doctorId) ?? 0;
+  room = (doctorId: string, roomId: string) => this.roomCount.get(`${doctorId}|${roomId}`) ?? 0;
+  shiftType = (doctorId: string, shiftTypeId: string) =>
+    this.shiftTypeCount.get(`${doctorId}|${shiftTypeId}`) ?? 0;
+  blocks = (doctorId: string, shiftTypeId: string) =>
+    this.blockCount.get(`${doctorId}|${shiftTypeId}`) ?? 0;
+  dayLoad = (doctorId: string, date: string) => this.dayCount.get(`${doctorId}|${date}`) ?? 0;
+
+  isBusy = (doctorId: string, date: string, shiftTypeId: string) =>
+    this.busySlots.has(`${doctorId}|${date}|${shiftTypeId}`);
+  worksRoomOn = (doctorId: string, date: string, roomId: string) =>
+    this.roomsPerDay.has(`${doctorId}|${date}|${roomId}`);
+  isResting = (doctorId: string, date: string) => this.restDays.has(`${doctorId}|${date}`);
+  isOnSecondRest = (doctorId: string, date: string) => this.secondRestDays.has(`${doctorId}|${date}`);
+  hasExclusiveShift = (doctorId: string, date: string) => this.exclusiveDays.has(`${doctorId}|${date}`);
+  isOff = (doctorId: string, date: string) => this.offDays.has(`${doctorId}|${date}`);
+}
+
+// ---------------------------------------------------------------------------
+// Utilità
+// ---------------------------------------------------------------------------
+
+function bump(counter: Map<string, number>, key: string): void {
+  counter.set(key, (counter.get(key) ?? 0) + 1);
+}
+
+/**
+ * Ricostruisce a chi appartiene ogni blocco a rotazione a partire da un
+ * calendario già prodotto. Serve a far proseguire allo stesso medico un
+ * blocco iniziato nel mese precedente.
+ */
+function collectBlockOwners(
+  assignments: Assignment[],
+  shiftTypes: ShiftTypeIndex,
+): Map<string, string> {
+  const owners = new Map<string, string>();
+
+  for (const assignment of assignments) {
+    const blockIndex = shiftTypes.blockIndex(assignment.shiftTypeId, assignment.date);
+    if (blockIndex === null) continue;
+    owners.set(`${assignment.shiftTypeId}|${blockIndex}`, assignment.doctorId);
+  }
+
+  return owners;
+}
+
+function mergeCounts(
+  left: Record<string, number>,
+  right: Record<string, number>,
+): Record<string, number> {
+  const merged = { ...left };
+  for (const [key, value] of Object.entries(right)) {
+    merged[key] = (merged[key] ?? 0) + value;
+  }
+  return merged;
+}
+
+function variance(stats: DoctorStats[], valueOf: (stat: DoctorStats) => number): number {
+  if (stats.length === 0) return 0;
+  const values = stats.map(valueOf);
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const blocks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    blocks.push(items.slice(index, index + size));
+  }
+  return blocks;
+}
+
+/** Spezza l'elenco a ogni ricorrenza del giorno indicato, mantenendo i giorni interi. */
+function splitByWeekday(requirements: SlotRequirement[], weekday: Weekday): SlotRequirement[][] {
+  const blocks: SlotRequirement[][] = [];
+  let current: SlotRequirement[] = [];
+  let currentDate: string | null = null;
+
+  for (const requirement of requirements) {
+    const startsNewBlock =
+      current.length > 0 && requirement.weekday === weekday && requirement.date !== currentDate;
+
+    if (startsNewBlock) {
+      blocks.push(current);
+      current = [];
+    }
+    if (current.length === 0) currentDate = requirement.date;
+    current.push(requirement);
+  }
+
+  if (current.length > 0) blocks.push(current);
+  return blocks;
+}
+
+function rotate<T>(items: T[], offset: number): T[] {
+  if (items.length === 0) return items;
+  const shift = ((offset % items.length) + items.length) % items.length;
+  return [...items.slice(shift), ...items.slice(0, shift)];
+}
+
+/**
+ * Generatore Lehmer: a parità di seme produce sempre la stessa sequenza, così
+ * un tentativo è riproducibile a scopo di diagnosi.
+ */
+function createSeededRandom(seed: number): () => number {
+  const modulus = 2147483647;
+  let state = Math.floor(seed * (modulus - 1)) + 1;
+  if (state <= 0 || state >= modulus) state = 1;
+
+  return () => {
+    state = (state * 16807) % modulus;
+    return (state - 1) / (modulus - 1);
+  };
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
 }

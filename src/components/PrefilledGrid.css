@@ -1,0 +1,137 @@
+.prefilled-scroll {
+  overflow: auto;
+  max-height: 460px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.prefilled-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.75rem;
+}
+
+.prefilled-grid th,
+.prefilled-grid td {
+  border-bottom: 1px solid var(--border);
+}
+
+.prefilled-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 0.3125rem 0.4375rem;
+  background: var(--surface-2);
+  border-bottom: 2px solid var(--border-strong);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.prefilled-grid .col-room {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prefilled-grid .col-shift {
+  display: block;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.prefilled-grid .day-head {
+  left: 0;
+  width: 1%;
+  position: sticky;
+  z-index: 2;
+  min-width: 52px;
+  padding: 0.1875rem 0.4375rem;
+  background: var(--surface);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.prefilled-grid thead .day-head {
+  z-index: 4;
+  background: var(--surface-2);
+}
+
+.prefilled-grid tbody tr.weekend .day-head {
+  color: #fcd34d;
+}
+
+.prefilled-grid tbody tr.weekend .cell {
+  background: rgba(245, 165, 36, 0.05);
+}
+
+.prefilled-grid .day-number {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.prefilled-grid .day-weekday {
+  margin-left: 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+.prefilled-grid .cell {
+  padding: 0.125rem;
+  text-align: center;
+}
+
+.prefilled-grid .cell.unavailable {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 3px,
+    rgba(148, 163, 184, 0.08) 3px,
+    rgba(148, 163, 184, 0.08) 6px
+  );
+}
+
+.cell-button {
+  width: 100%;
+  min-width: 68px;
+  min-height: 22px;
+  padding: 0.0625rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 0.6875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+
+.cell-button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.cell-button.filled {
+  border-style: solid;
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.cell-button.active {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.popover-item.danger {
+  color: var(--danger);
+}
+
+.popover-item.danger:hover {
+  background: var(--danger-soft);
+}

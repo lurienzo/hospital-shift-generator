@@ -1,189 +1,230 @@
 import { useState } from 'react';
-import { Doctor, OperativeRoom, Weekday, WEEKDAYS, WEEKDAY_LABELS, DOCTOR_COLORS } from '../models/types';
-import { generateId } from '../utils/idGenerator';
+import { Doctor, DOCTOR_COLORS, Weekday, WEEKDAYS, WEEKDAY_LABELS } from '../models/types';
+import { useConfig } from '../state/configContext';
+import { generateId } from '../utils/id';
 import './DoctorManager.css';
 
-interface DoctorManagerProps {
-  doctors: Doctor[];
-  rooms: OperativeRoom[];
-  onDoctorsChange: (doctors: Doctor[]) => void;
-}
+export function DoctorManager() {
+  const { doctors, setDoctors, rooms, setRooms } = useConfig();
 
-export function DoctorManager({ doctors, rooms, onDoctorsChange }: DoctorManagerProps) {
   const [newDoctorName, setNewDoctorName] = useState('');
-  const [expandedDoctor, setExpandedDoctor] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
-  const getNextColor = (): string => {
-    const usedColors = doctors.map(doctor => doctor.color);
-    const availableColor = DOCTOR_COLORS.find(color => !usedColors.includes(color));
-    return availableColor || DOCTOR_COLORS[doctors.length % DOCTOR_COLORS.length];
+  const nextColor = () => {
+    const used = new Set(doctors.map(doctor => doctor.color));
+    return DOCTOR_COLORS.find(color => !used.has(color))
+      ?? DOCTOR_COLORS[doctors.length % DOCTOR_COLORS.length];
   };
 
   const addDoctor = () => {
-    if (!newDoctorName.trim()) return;
+    const name = newDoctorName.trim();
+    if (!name) return;
 
-    const newDoctor: Doctor = {
+    if (doctors.some(doctor => doctor.name.toLowerCase() === name.toLowerCase())) {
+      window.alert(`Esiste già un dottore chiamato "${name}".`);
+      return;
+    }
+
+    setDoctors([...doctors, {
       id: generateId(),
-      name: newDoctorName.trim().toUpperCase(),
-      color: getNextColor(),
+      name,
+      color: nextColor(),
       excludedRooms: [],
       excludedWeekdays: [],
-    };
-
-    onDoctorsChange([...doctors, newDoctor]);
+    }]);
     setNewDoctorName('');
   };
 
-  const removeDoctor = (doctorId: string) => {
-    onDoctorsChange(doctors.filter(doctor => doctor.id !== doctorId));
+  const updateDoctor = (doctorId: string, changes: Partial<Doctor>) => {
+    setDoctors(doctors.map(doctor => (doctor.id === doctorId ? { ...doctor, ...changes } : doctor)));
   };
 
-  const updateDoctorColor = (doctorId: string, color: string) => {
-    onDoctorsChange(
-      doctors.map(doctor => (doctor.id === doctorId ? { ...doctor, color } : doctor))
-    );
+  const removeDoctor = (doctor: Doctor) => {
+    const inCycles = rooms.filter(room => room.cycle?.doctorIds.includes(doctor.id));
+    const message = inCycles.length > 0
+      ? `Eliminare "${doctor.name}"?\n\nVerrà rimosso anche dai cicli di rotazione di: ${inCycles.map(room => room.name).join(', ')}.`
+      : `Eliminare "${doctor.name}"?`;
+    if (!window.confirm(message)) return;
+
+    setDoctors(doctors.filter(other => other.id !== doctor.id));
+
+    // Un dottore eliminato non può restare nei cicli delle sale: lascerebbe
+    // buchi silenziosi nella rotazione.
+    if (inCycles.length > 0) {
+      setRooms(rooms.map(room => (
+        room.cycle?.doctorIds.includes(doctor.id)
+          ? {
+              ...room,
+              cycle: {
+                ...room.cycle,
+                doctorIds: room.cycle.doctorIds.filter(id => id !== doctor.id),
+              },
+            }
+          : room
+      )));
+    }
+
+    if (expandedId === doctor.id) setExpandedId(null);
   };
 
-  const toggleRoomExclusion = (doctorId: string, roomId: string) => {
-    onDoctorsChange(
-      doctors.map(doctor => {
-        if (doctor.id !== doctorId) return doctor;
-
-        const excludedRooms = doctor.excludedRooms.includes(roomId)
-          ? doctor.excludedRooms.filter(id => id !== roomId)
-          : [...doctor.excludedRooms, roomId];
-
-        return { ...doctor, excludedRooms };
-      })
-    );
+  const toggleRoom = (doctor: Doctor, roomId: string) => {
+    updateDoctor(doctor.id, {
+      excludedRooms: doctor.excludedRooms.includes(roomId)
+        ? doctor.excludedRooms.filter(id => id !== roomId)
+        : [...doctor.excludedRooms, roomId],
+    });
   };
 
-  const toggleWeekdayExclusion = (doctorId: string, weekday: Weekday) => {
-    onDoctorsChange(
-      doctors.map(doctor => {
-        if (doctor.id !== doctorId) return doctor;
-
-        const excludedWeekdays = doctor.excludedWeekdays.includes(weekday)
-          ? doctor.excludedWeekdays.filter(day => day !== weekday)
-          : [...doctor.excludedWeekdays, weekday];
-
-        return { ...doctor, excludedWeekdays };
-      })
-    );
+  const toggleWeekday = (doctor: Doctor, weekday: Weekday) => {
+    updateDoctor(doctor.id, {
+      excludedWeekdays: doctor.excludedWeekdays.includes(weekday)
+        ? doctor.excludedWeekdays.filter(day => day !== weekday)
+        : [...doctor.excludedWeekdays, weekday],
+    });
   };
 
   return (
-    <div className="doctor-manager">
-      <div className="add-doctor-form">
+    <div className="doctor-manager stack">
+      <form className="add-row" onSubmit={event => { event.preventDefault(); addDoctor(); }}>
         <input
-          type="text"
+          className="input"
           value={newDoctorName}
+          placeholder="Nome del dottore (es. Rossi)"
           onChange={event => setNewDoctorName(event.target.value)}
-          placeholder="Nome dottore (es. Rossi)"
-          onKeyDown={event => event.key === 'Enter' && addDoctor()}
         />
-        <button onClick={addDoctor} className="btn-add">
-          + Aggiungi Dottore
+        <button type="submit" className="btn btn-primary" disabled={!newDoctorName.trim()}>
+          Aggiungi dottore
         </button>
-      </div>
+      </form>
 
-      <div className="doctors-grid">
-        {doctors.map(doctor => (
-          <div key={doctor.id} className="doctor-card" style={{ borderTopColor: doctor.color }}>
-            <div className="doctor-header">
-              <input
-                type="color"
-                className="doctor-color-picker"
-                value={doctor.color}
-                onChange={event => updateDoctorColor(doctor.id, event.target.value)}
-                title="Cambia colore"
-              />
-              <div className="doctor-avatar" style={{ background: doctor.color }}>
-                {doctor.name.charAt(0)}
-              </div>
-              <h3>{doctor.name}</h3>
-              <div className="doctor-actions">
-                <button
-                  className="btn-expand"
-                  onClick={() => setExpandedDoctor(expandedDoctor === doctor.id ? null : doctor.id)}
-                >
-                  {expandedDoctor === doctor.id ? '▼' : '▶'}
-                </button>
-                <button className="btn-remove" onClick={() => removeDoctor(doctor.id)}>
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            {expandedDoctor === doctor.id && (
-              <div className="doctor-preferences">
-                <div className="preference-section">
-                  <h4>Esclusioni Sale Operative</h4>
-                  <div className="preference-grid">
-                    {rooms.map(room => (
-                      <label
-                        key={room.id}
-                        className={`preference-item ${doctor.excludedRooms.includes(room.id) ? 'excluded' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={doctor.excludedRooms.includes(room.id)}
-                          onChange={() => toggleRoomExclusion(doctor.id, room.id)}
-                        />
-                        <span>{room.name}</span>
-                      </label>
-                    ))}
-                    {rooms.length === 0 && (
-                      <p className="no-data">Nessuna sala configurata</p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="preference-section">
-                  <h4>Esclusioni Giorni della Settimana</h4>
-                  <div className="preference-grid weekdays">
-                    {WEEKDAYS.map(weekday => (
-                      <label
-                        key={weekday}
-                        className={`preference-item ${doctor.excludedWeekdays.includes(weekday) ? 'excluded' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={doctor.excludedWeekdays.includes(weekday)}
-                          onChange={() => toggleWeekdayExclusion(doctor.id, weekday)}
-                        />
-                        <span>{WEEKDAY_LABELS[weekday]}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {expandedDoctor !== doctor.id && (
-              <div className="doctor-summary">
-                {doctor.excludedRooms.length > 0 && (
-                  <span className="exclusion-badge rooms">
-                    {doctor.excludedRooms.length} sale escluse
-                  </span>
-                )}
-                {doctor.excludedWeekdays.length > 0 && (
-                  <span className="exclusion-badge days">
-                    {doctor.excludedWeekdays.length} giorni esclusi
-                  </span>
-                )}
-                {doctor.excludedRooms.length === 0 && doctor.excludedWeekdays.length === 0 && (
-                  <span className="no-exclusions">Nessuna esclusione</span>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {doctors.length === 0 && (
+      {doctors.length === 0 ? (
         <div className="empty-state">
-          <p>Nessun dottore configurato. Aggiungi i dottori per iniziare.</p>
+          <h2>Nessun dottore configurato</h2>
+          <p>
+            Aggiungi le persone da inserire nei turni. Per ciascuna potrai indicare le sale e i
+            giorni della settimana in cui non lavora mai.
+          </p>
+        </div>
+      ) : (
+        <div className="doctor-grid">
+          {doctors.map(doctor => {
+            const expanded = expandedId === doctor.id;
+            const exclusions = doctor.excludedRooms.length + doctor.excludedWeekdays.length;
+
+            return (
+              <article
+                key={doctor.id}
+                className={`doctor-card ${expanded ? 'expanded' : ''}`}
+                style={{ borderTopColor: doctor.color }}
+              >
+                <header className="doctor-header">
+                  <span className="doctor-avatar" style={{ background: doctor.color }}>
+                    {doctor.name.charAt(0).toUpperCase()}
+                  </span>
+
+                  {renamingId === doctor.id ? (
+                    <input
+                      className="input"
+                      defaultValue={doctor.name}
+                      autoFocus
+                      onBlur={event => {
+                        const name = event.target.value.trim();
+                        if (name) updateDoctor(doctor.id, { name });
+                        setRenamingId(null);
+                      }}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') event.currentTarget.blur();
+                        if (event.key === 'Escape') setRenamingId(null);
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="doctor-name"
+                      onClick={() => setRenamingId(doctor.id)}
+                      title="Clicca per rinominare"
+                    >
+                      {doctor.name}
+                    </button>
+                  )}
+
+                  <input
+                    className="color-input"
+                    type="color"
+                    value={doctor.color}
+                    onChange={event => updateDoctor(doctor.id, { color: event.target.value })}
+                    title="Colore del dottore"
+                    aria-label={`Colore di ${doctor.name}`}
+                  />
+                  <button
+                    type="button"
+                    className="btn-icon danger"
+                    onClick={() => removeDoctor(doctor)}
+                    aria-label={`Elimina ${doctor.name}`}
+                  >✕</button>
+                </header>
+
+                <button
+                  type="button"
+                  className="doctor-toggle"
+                  onClick={() => setExpandedId(expanded ? null : doctor.id)}
+                  aria-expanded={expanded}
+                >
+                  {exclusions === 0
+                    ? 'Nessuna esclusione'
+                    : `${exclusions} esclusion${exclusions === 1 ? 'e' : 'i'}`}
+                  <span className="doctor-toggle-icon">{expanded ? '▴' : '▾'}</span>
+                </button>
+
+                {expanded && (
+                  <div className="doctor-body">
+                    <div className="field">
+                      <span className="label">Sale in cui non lavora</span>
+                      {rooms.length === 0 ? (
+                        <p className="hint">Nessuna sala configurata.</p>
+                      ) : (
+                        <div className="row-wrap">
+                          {rooms.map(room => (
+                            <button
+                              key={room.id}
+                              type="button"
+                              className={`exclusion-pill ${doctor.excludedRooms.includes(room.id) ? 'on' : ''}`}
+                              onClick={() => toggleRoom(doctor, room.id)}
+                            >
+                              <span className="dot" style={{ background: room.color }} />
+                              {room.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="field">
+                      <span className="label">Giorni in cui non lavora</span>
+                      <div className="row-wrap">
+                        {WEEKDAYS.map(weekday => (
+                          <button
+                            key={weekday}
+                            type="button"
+                            className={`exclusion-pill ${doctor.excludedWeekdays.includes(weekday) ? 'on' : ''}`}
+                            onClick={() => toggleWeekday(doctor, weekday)}
+                          >
+                            {WEEKDAY_LABELS[weekday]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <p className="hint">
+                      Queste esclusioni valgono sempre. Ferie e disponibilità di un singolo mese
+                      si impostano nella sezione Genera.
+                    </p>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       )}
     </div>

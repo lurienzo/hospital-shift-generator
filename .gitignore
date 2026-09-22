@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Screenshot prodotti dalla verifica visiva
+tools/screenshots

@@ -1,0 +1,224 @@
+.slot-grid-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.slot-grid-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.slot-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
+}
+
+.slot-grid th,
+.slot-grid td {
+  padding: 0.3125rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.slot-grid tbody tr:last-child th,
+.slot-grid tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.slot-grid thead th {
+  padding: 0.4375rem 0.3125rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.slot-grid thead th.weekend {
+  color: #fcd34d;
+}
+
+.slot-grid .corner {
+  text-align: left;
+  min-width: 150px;
+}
+
+/* ----- Intestazione di riga ----- */
+
+.slot-grid .shift-label {
+  display: table-cell;
+  padding-left: 0.625rem;
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface-2);
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.shift-label-name {
+  display: block;
+  font-size: 0.8125rem;
+}
+
+.shift-label-time {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.shift-label-warning {
+  display: inline-block;
+  margin-top: 0.1875rem;
+  padding: 0 0.3125rem;
+  border-radius: 3px;
+  background: var(--warning-soft);
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: #fcd34d;
+}
+
+/* ----- Celle ----- */
+
+.slot-cell {
+  width: 88px;
+  padding: 0.25rem;
+  border: 1px solid transparent;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.slot-cell.weekend:not(.active) {
+  background: rgba(245, 165, 36, 0.05);
+}
+
+.slot-cell.active {
+  border-radius: var(--r-sm);
+}
+
+.slot-add {
+  width: 100%;
+  min-height: 30px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 0.875rem;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.slot-add:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.slot-flags {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-faint);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.flag:hover:not(.static) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.flag.on {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: #3b2400;
+}
+
+.flag.static {
+  cursor: default;
+}
+
+.slot-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 0.625rem;
+}
+
+.slot-remove:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ----- Azioni di riga ----- */
+
+.slot-grid .row-actions-col {
+  text-align: left;
+  min-width: 190px;
+}
+
+.slot-grid .row-actions {
+  white-space: nowrap;
+}
+
+.row-actions-line {
+  display: flex;
+  align-items: center;
+  gap: 0.1875rem;
+}
+
+.row-actions-line + .row-actions-line {
+  margin-top: 0.1875rem;
+}
+
+.row-flag-label {
+  margin-right: 0.1875rem;
+  font-size: 0.625rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.flag.row-flag {
+  background: transparent;
+  border-style: dashed;
+}
+
+.flag.row-flag:hover {
+  background: var(--warning-soft);
+  border-style: solid;
+  color: #fcd34d;
+}
+
+.slot-grid-legend {
+  font-size: 0.75rem;
+}

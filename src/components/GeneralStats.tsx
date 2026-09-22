@@ -1,610 +1,354 @@
-import { useMemo, useState, useEffect } from 'react';
-import { Doctor, OperativeRoom, TimeSlot, TIME_SLOT_HOURS, getMonthKey } from '../models/types';
+import { useMemo, useState } from 'react';
 import { StorageService } from '../services/StorageService';
-import { MONTH_NAMES_SHORT, MONTH_NAMES_FULL } from '../utils/constants';
+import { buildStatColumns, computeStats, standardDeviation } from '../domain/stats';
+import { RoomSlotIndex } from '../domain/validation';
+import { blockLabel } from '../domain/shiftTypes';
+import { useConfig } from '../state/configContext';
+import { StatsTable } from './StatsTable';
+import { MONTH_NAMES, MONTH_NAMES_SHORT } from '../utils/date';
 import './GeneralStats.css';
 
 interface GeneralStatsProps {
-  doctors: Doctor[];
-  rooms: OperativeRoom[];
+  /** Cambia quando le versioni salvate sono state modificate. */
+  revision: number;
 }
 
-interface AggregatedDoctorStats {
-  doctorId: string;
-  doctorName: string;
-  doctorColor: string;
-  totalShifts: number;
-  totalHours: number;
-  distinctDays: number;
-  weekendShifts: number;
-  criticalShifts: number;
-  shiftsByRoom: Record<string, number>;
-  shiftsByTimeSlot: Record<TimeSlot, number>;
-  shiftsByMonth: Record<string, number>;
-}
+/**
+ * Statistiche aggregate sulle versioni attive di ciascun mese. Il calcolo usa
+ * lo stesso motore della vista mensile, così i due non possono discordare.
+ */
+export function GeneralStats({ revision }: GeneralStatsProps) {
+  const { rooms, doctors, shiftTypes, shiftTypeIndex } = useConfig();
+  const [balanceMetric, setBalanceMetric] = useState<string>('shifts');
 
-type SortColumn = 'name' | 'shifts' | 'hours' | 'days' | 'weekend' | 'critical' | 'morning' | 'afternoon' | 'night' | `room-${string}` | `month-${string}`;
-type SortDirection = 'asc' | 'desc';
+  const activeVersions = useMemo(
+    () => StorageService.getAllActiveVersions(),
+    // `revision` non compare nel calcolo ma ne invalida il risultato: i dati
+    // vivono in localStorage, che React non osserva.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [revision],
+  );
 
-type BalanceMetric = 
-  | 'total' 
-  | 'morning' 
-  | 'afternoon' 
-  | 'night' 
-  | 'weekend' 
-  | 'critical' 
-  | `room-${string}` 
-  | `month-${string}`;
-
-const monthNames = MONTH_NAMES_SHORT;
-
-const monthNamesFull = MONTH_NAMES_FULL;
-
-export function GeneralStats({ doctors, rooms }: GeneralStatsProps) {
-  const [sortColumn, setSortColumn] = useState<SortColumn>('shifts');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [balanceMetric, setBalanceMetric] = useState<BalanceMetric>('total');
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-
-  // Re-read active versions from localStorage on every mount (tab activation)
-  const [activeVersions, setActiveVersions] = useState(() => StorageService.getAllActiveVersions());
-  useEffect(() => {
-    setActiveVersions(StorageService.getAllActiveVersions());
-  }, []);
-
-  // Calculate available years
   const availableYears = useMemo(() => {
-    const years = new Set<number>();
-    activeVersions.forEach(v => years.add(v.schedule.year));
-    if (years.size === 0) {
-      years.add(new Date().getFullYear());
-    }
-    return Array.from(years).sort();
+    const years = new Set(activeVersions.map(version => version.schedule.year));
+    if (years.size === 0) years.add(new Date().getFullYear());
+    return [...years].sort((a, b) => a - b);
   }, [activeVersions]);
 
-  // Sync selectedYear with availableYears - if current selection is invalid, pick the best option
-  useEffect(() => {
-    if (!availableYears.includes(selectedYear)) {
-      // Current year not available, select the most recent year that has data
-      const newYear = availableYears[availableYears.length - 1] || new Date().getFullYear();
-      setSelectedYear(newYear);
-    }
-  }, [availableYears, selectedYear]);
+  const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
+  const year = availableYears.includes(selectedYear)
+    ? selectedYear
+    : availableYears[availableYears.length - 1];
 
-  const activeVersionsForYear = useMemo(() => {
-    return activeVersions.filter(v => v.schedule.year === selectedYear);
-  }, [activeVersions, selectedYear]);
+  const versionsForYear = useMemo(
+    () => activeVersions.filter(version => version.schedule.year === year),
+    [activeVersions, year],
+  );
 
-  const aggregatedStats = useMemo((): AggregatedDoctorStats[] => {
-    const doctorStatsMap = new Map<string, AggregatedDoctorStats>();
+  const monthsCovered = useMemo(
+    () => versionsForYear.map(version => version.schedule.month).sort((a, b) => a - b),
+    [versionsForYear],
+  );
 
-    // Initialize stats for all doctors
-    for (const doctor of doctors) {
-      doctorStatsMap.set(doctor.id, {
-        doctorId: doctor.id,
-        doctorName: doctor.name,
-        doctorColor: doctor.color,
-        totalShifts: 0,
-        totalHours: 0,
-        distinctDays: 0,
-        weekendShifts: 0,
-        criticalShifts: 0,
-        shiftsByRoom: {},
-        shiftsByTimeSlot: {
-          '08:00-14:00': 0,
-          '14:00-20:00': 0,
-          '20:00-08:00': 0,
-        },
-        shiftsByMonth: {},
+  const slotIndex = useMemo(() => new RoomSlotIndex(rooms), [rooms]);
+
+  const stats = useMemo(
+    () => computeStats(
+      versionsForYear.map(version => version.schedule),
+      { doctors, rooms, shiftTypes: shiftTypeIndex, slotIndex },
+    ),
+    [versionsForYear, doctors, rooms, shiftTypeIndex, slotIndex],
+  );
+
+  const columns = useMemo(
+    () => buildStatColumns({
+      rooms,
+      shiftTypes,
+      months: monthsCovered.map(month => ({ year, month })),
+      includeCritical: stats.some(stat => stat.criticalShifts > 0),
+    }),
+    [rooms, shiftTypes, monthsCovered, year, stats],
+  );
+
+  const summary = useMemo(() => {
+    const totalShifts = stats.reduce((sum, stat) => sum + stat.totalShifts, 0);
+    const totalHours = stats.reduce((sum, stat) => sum + stat.totalHours, 0);
+    const averageShifts = stats.length > 0 ? totalShifts / stats.length : 0;
+
+    return {
+      totalShifts,
+      totalHours,
+      averageShifts,
+      averageHours: stats.length > 0 ? totalHours / stats.length : 0,
+      deviation: standardDeviation(stats.map(stat => stat.totalShifts), averageShifts),
+    };
+  }, [stats]);
+
+  const metric = columns.find(column => column.key === balanceMetric) ?? columns[0];
+
+  const balance = useMemo(() => {
+    if (!metric || stats.length === 0) return null;
+
+    const values = stats.map(metric.value);
+    const max = Math.max(...values, 1);
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+
+    const rows = [...stats]
+      .sort((a, b) => metric.value(b) - metric.value(a))
+      .map(stat => {
+        const value = metric.value(stat);
+        return {
+          stat,
+          value,
+          share: (value / max) * 100,
+          deviation: value - average,
+        };
       });
 
-      // Initialize room counts
-      for (const room of rooms) {
-        doctorStatsMap.get(doctor.id)!.shiftsByRoom[room.id] = 0;
-      }
-    }
-
-    // Build set of critical slots
-    const criticalSlots = new Set<string>();
-    for (const room of rooms) {
-      for (const slot of room.slots) {
-        if (slot.isCritical) {
-          criticalSlots.add(`${room.id}-${slot.timeSlot}`);
-        }
-      }
-    }
-
-    // Aggregate stats from all active versions for the selected year
-    const allDaysWorked = new Map<string, Set<string>>(); // doctorId -> Set of dates
-
-    for (const version of activeVersionsForYear) {
-      const { schedule } = version;
-      const monthKey = getMonthKey(schedule.year, schedule.month);
-
-      for (const assignment of schedule.assignments) {
-        const stats = doctorStatsMap.get(assignment.doctorId);
-        if (!stats) continue;
-
-        stats.totalShifts++;
-        stats.totalHours += TIME_SLOT_HOURS[assignment.timeSlot];
-
-        // Track distinct days
-        if (!allDaysWorked.has(assignment.doctorId)) {
-          allDaysWorked.set(assignment.doctorId, new Set());
-        }
-        allDaysWorked.get(assignment.doctorId)!.add(assignment.date);
-
-        // Weekend shifts
-        const date = new Date(assignment.date);
-        if (date.getDay() === 0 || date.getDay() === 6) {
-          stats.weekendShifts++;
-        }
-
-        // Critical shifts
-        if (criticalSlots.has(`${assignment.roomId}-${assignment.timeSlot}`)) {
-          stats.criticalShifts++;
-        }
-
-        // By room
-        if (stats.shiftsByRoom[assignment.roomId] !== undefined) {
-          stats.shiftsByRoom[assignment.roomId]++;
-        }
-
-        // By time slot
-        stats.shiftsByTimeSlot[assignment.timeSlot]++;
-
-        // By month
-        if (!stats.shiftsByMonth[monthKey]) {
-          stats.shiftsByMonth[monthKey] = 0;
-        }
-        stats.shiftsByMonth[monthKey]++;
-      }
-    }
-
-    // Update distinct days
-    for (const [doctorId, days] of allDaysWorked) {
-      const stats = doctorStatsMap.get(doctorId);
-      if (stats) {
-        stats.distinctDays = days.size;
-      }
-    }
-
-    return Array.from(doctorStatsMap.values());
-  }, [doctors, rooms, activeVersionsForYear]);
-
-  const handleSort = (column: SortColumn) => {
-    if (sortColumn === column) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortColumn(column);
-      setSortDirection('desc');
-    }
-  };
-
-  const getSortIndicator = (column: SortColumn) => {
-    if (sortColumn !== column) return '';
-    return sortDirection === 'asc' ? ' ↑' : ' ↓';
-  };
-
-  const sortedStats = useMemo(() => {
-    return [...aggregatedStats].sort((a, b) => {
-      let comparison = 0;
-      
-      switch (sortColumn) {
-        case 'name':
-          comparison = a.doctorName.localeCompare(b.doctorName);
-          break;
-        case 'shifts':
-          comparison = a.totalShifts - b.totalShifts;
-          break;
-        case 'hours':
-          comparison = a.totalHours - b.totalHours;
-          break;
-        case 'days':
-          comparison = a.distinctDays - b.distinctDays;
-          break;
-        case 'weekend':
-          comparison = a.weekendShifts - b.weekendShifts;
-          break;
-        case 'critical':
-          comparison = a.criticalShifts - b.criticalShifts;
-          break;
-        case 'morning':
-          comparison = a.shiftsByTimeSlot['08:00-14:00'] - b.shiftsByTimeSlot['08:00-14:00'];
-          break;
-        case 'afternoon':
-          comparison = a.shiftsByTimeSlot['14:00-20:00'] - b.shiftsByTimeSlot['14:00-20:00'];
-          break;
-        case 'night':
-          comparison = a.shiftsByTimeSlot['20:00-08:00'] - b.shiftsByTimeSlot['20:00-08:00'];
-          break;
-        default:
-          // Room-specific sorting
-          if (sortColumn.startsWith('room-')) {
-            const roomId = sortColumn.replace('room-', '');
-            comparison = (a.shiftsByRoom[roomId] || 0) - (b.shiftsByRoom[roomId] || 0);
-          } else if (sortColumn.startsWith('month-')) {
-            const monthKey = sortColumn.replace('month-', '');
-            comparison = (a.shiftsByMonth[monthKey] || 0) - (b.shiftsByMonth[monthKey] || 0);
-          }
-      }
-      
-      return sortDirection === 'asc' ? comparison : -comparison;
-    });
-  }, [aggregatedStats, sortColumn, sortDirection]);
-
-  // Calculate totals and averages for summary
-  const summary = useMemo(() => {
-    const totalShifts = aggregatedStats.reduce((sum, s) => sum + s.totalShifts, 0);
-    const totalHours = aggregatedStats.reduce((sum, s) => sum + s.totalHours, 0);
-    const avgShifts = doctors.length > 0 ? totalShifts / doctors.length : 0;
-    const avgHours = doctors.length > 0 ? totalHours / doctors.length : 0;
-    
-    const shiftVariance = doctors.length > 0
-      ? Math.sqrt(aggregatedStats.reduce((sum, s) => sum + Math.pow(s.totalShifts - avgShifts, 2), 0) / doctors.length)
-      : 0;
-
-    return { totalShifts, totalHours, avgShifts, avgHours, shiftVariance };
-  }, [aggregatedStats, doctors.length]);
-
-  // Get months covered for the selected year
-  const monthsCovered = useMemo(() => {
-    return activeVersionsForYear.map(v => v.schedule.month).sort((a, b) => a - b);
-  }, [activeVersionsForYear]);
+    return { rows, average };
+  }, [metric, stats]);
 
   if (doctors.length === 0) {
     return (
-      <div className="general-stats">
-        <div className="empty-state">
-          <div className="empty-icon">👨‍⚕️</div>
-          <h2>Nessun dottore configurato</h2>
-          <p>Aggiungi almeno un dottore nella sezione "Dottori" per visualizzare le statistiche.</p>
-        </div>
+      <div className="empty-state">
+        <h2>Nessun dottore configurato</h2>
+        <p>Aggiungi dei dottori per vedere le statistiche di questo servizio.</p>
       </div>
     );
   }
 
   return (
-    <div className="general-stats">
-      <div className="stats-header">
-        <div className="stats-title">
-          <h2>📊 Statistiche Generali</h2>
-          <p>Aggregazione delle statistiche basata sulle versioni attive di ciascun mese</p>
+    <div className="general-stats stack">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Statistiche del servizio</h3>
+            <p className="hint">
+              Somma delle versioni attive di ciascun mese. Per includere un mese, rendi attiva
+              una delle sue versioni dal calendario.
+            </p>
+          </div>
+          <div className="field field-narrow">
+            <label htmlFor="stats-year">Anno</label>
+            <select
+              id="stats-year"
+              className="select"
+              value={year}
+              onChange={event => setSelectedYear(Number(event.target.value))}
+            >
+              {availableYears.map(option => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div className="year-selector">
-          <label>Anno</label>
-          <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}>
-            {availableYears.map(year => (
-              <option key={year} value={year}>{year}</option>
-            ))}
-          </select>
-        </div>
-      </div>
 
-      <div className="months-coverage">
-        <h3>📅 Mesi con versioni attive ({selectedYear})</h3>
-        <div className="months-grid">
-          {Array.from({ length: 12 }, (_, i) => i + 1).map(month => {
-            const version = activeVersionsForYear.find(v => v.schedule.month === month);
-            const isActive = !!version;
+        <div className="months-coverage">
+          {MONTH_NAMES_SHORT.map((name, index) => {
+            const version = versionsForYear.find(
+              candidate => candidate.schedule.month === index + 1);
             return (
-              <div 
-                key={month} 
-                className={`month-chip ${isActive ? 'active' : 'inactive'}`}
-                title={version ? `${version.name} - Creato: ${new Date(version.createdAt).toLocaleDateString('it-IT')}` : 'Nessuna versione attiva'}
+              <span
+                key={name}
+                className={`month-mark ${version ? 'covered' : ''}`}
+                title={version
+                  ? `${version.name} — ${version.schedule.assignments.length} turni`
+                  : `Nessuna versione attiva per ${MONTH_NAMES[index]}`}
               >
-                <span className="month-name">{monthNames[month - 1]}</span>
-                {isActive && <span className="check-icon">✓</span>}
-              </div>
+                {name}
+              </span>
             );
           })}
         </div>
+
         {monthsCovered.length === 0 && (
-          <p className="no-months-warning">
-            ⚠️ Nessuna versione attiva per {selectedYear}. Genera e salva calendari per vedere le statistiche.
+          <p className="hint no-data">
+            Nessuna versione attiva per il {year}. Genera e salva un calendario, poi rendilo
+            attivo per vederlo qui.
           </p>
         )}
-      </div>
+      </section>
 
       {monthsCovered.length > 0 && (
         <>
-          <div className="summary-cards">
-            <div className="summary-card">
-              <span className="card-value">{summary.totalShifts}</span>
-              <span className="card-label">Turni Totali</span>
+          <div className="stat-grid">
+            <div className="stat-card tone-primary">
+              <span className="value">{summary.totalShifts}</span>
+              <span className="label">Turni totali</span>
             </div>
-            <div className="summary-card">
-              <span className="card-value">{summary.totalHours}</span>
-              <span className="card-label">Ore Totali</span>
+            <div className="stat-card">
+              <span className="value">{summary.totalHours}</span>
+              <span className="label">Ore totali</span>
             </div>
-            <div className="summary-card">
-              <span className="card-value">{summary.avgShifts.toFixed(1)}</span>
-              <span className="card-label">Media Turni/Dottore</span>
+            <div className="stat-card">
+              <span className="value">{summary.averageShifts.toFixed(1)}</span>
+              <span className="label">Turni per dottore</span>
             </div>
-            <div className="summary-card">
-              <span className="card-value">{summary.avgHours.toFixed(1)}</span>
-              <span className="card-label">Media Ore/Dottore</span>
+            <div className="stat-card">
+              <span className="value">{summary.averageHours.toFixed(1)}</span>
+              <span className="label">Ore per dottore</span>
             </div>
-            <div className="summary-card">
-              <span className="card-value">{summary.shiftVariance.toFixed(2)}</span>
-              <span className="card-label">Deviazione Std Turni</span>
+            <div className="stat-card tone-info">
+              <span className="value">{summary.deviation.toFixed(2)}</span>
+              <span className="label">Dev. standard turni</span>
             </div>
-            <div className="summary-card">
-              <span className="card-value">{monthsCovered.length}</span>
-              <span className="card-label">Mesi Attivi</span>
+            <div className="stat-card tone-accent">
+              <span className="value">{monthsCovered.length}</span>
+              <span className="label">Mesi considerati</span>
             </div>
           </div>
 
-          <div className="stats-table-container">
-            <table className="stats-table">
-              <thead>
-                <tr>
-                  <th 
-                    className="sortable sticky-col"
-                    onClick={() => handleSort('name')}
-                  >
-                    Dottore{getSortIndicator('name')}
-                  </th>
-                  <th className="sortable" onClick={() => handleSort('shifts')}>
-                    Turni{getSortIndicator('shifts')}
-                  </th>
-                  <th className="sortable" onClick={() => handleSort('hours')}>
-                    Ore{getSortIndicator('hours')}
-                  </th>
-                  <th className="sortable" onClick={() => handleSort('days')}>
-                    Giorni{getSortIndicator('days')}
-                  </th>
-                  <th className="sortable separator-left" onClick={() => handleSort('weekend')}>
-                    🗓️ Weekend{getSortIndicator('weekend')}
-                  </th>
-                  <th className="sortable" onClick={() => handleSort('critical')}>
-                    ⚡ Critici{getSortIndicator('critical')}
-                  </th>
-                  <th className="sortable separator-left timeslot-header" onClick={() => handleSort('morning')}>
-                    🌅 Matt{getSortIndicator('morning')}
-                  </th>
-                  <th className="sortable timeslot-header" onClick={() => handleSort('afternoon')}>
-                    🌇 Pom{getSortIndicator('afternoon')}
-                  </th>
-                  <th className="sortable timeslot-header" onClick={() => handleSort('night')}>
-                    🌙 Notte{getSortIndicator('night')}
-                  </th>
-                  {rooms.map(room => (
-                    <th 
-                      key={room.id} 
-                      className="sortable separator-left"
-                      onClick={() => handleSort(`room-${room.id}`)}
-                      style={{ borderTopColor: room.color }}
-                    >
-                      {room.name.substring(0, 6)}{getSortIndicator(`room-${room.id}`)}
-                    </th>
-                  ))}
-                  {monthsCovered.map(month => (
-                    <th
-                      key={month}
-                      className="sortable separator-left month-col"
-                      onClick={() => handleSort(`month-${selectedYear}-${month}`)}
-                    >
-                      {monthNames[month - 1]}{getSortIndicator(`month-${selectedYear}-${month}`)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedStats.map(stat => (
-                  <tr key={stat.doctorId}>
-                    <td className="doctor-name-cell sticky-col">
-                      <span 
-                        className="doctor-color-dot" 
-                        style={{ backgroundColor: stat.doctorColor }}
-                      ></span>
-                      {stat.doctorName}
-                    </td>
-                    <td className="numeric">{stat.totalShifts}</td>
-                    <td className="numeric">{stat.totalHours}</td>
-                    <td className="numeric">{stat.distinctDays}</td>
-                    <td className="numeric separator-left">{stat.weekendShifts}</td>
-                    <td className="numeric">{stat.criticalShifts}</td>
-                    <td className="numeric separator-left">{stat.shiftsByTimeSlot['08:00-14:00']}</td>
-                    <td className="numeric">{stat.shiftsByTimeSlot['14:00-20:00']}</td>
-                    <td className="numeric">{stat.shiftsByTimeSlot['20:00-08:00']}</td>
-                    {rooms.map(room => (
-                      <td key={room.id} className="numeric separator-left">
-                        {stat.shiftsByRoom[room.id] || 0}
-                      </td>
-                    ))}
-                    {monthsCovered.map(month => {
-                      const monthKey = `${selectedYear}-${month}`;
-                      return (
-                        <td key={month} className="numeric separator-left month-col">
-                          {stat.shiftsByMonth[monthKey] || 0}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {shiftTypeIndex.rotational.length > 0 && (
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h3>Fasce a rotazione</h3>
+                  <p className="hint">
+                    Quante volte ciascuno ha coperto un blocco intero. È qui che si vede se la
+                    rotazione è equa: i valori dovrebbero essere vicini fra loro.
+                  </p>
+                </div>
+              </div>
 
-          <div className="balance-analysis">
-            <div className="balance-header">
-              <h3>📈 Analisi Bilanciamento</h3>
-              <div className="balance-metric-selectors">
-                <div className="metric-group">
-                  <span className="metric-group-label">Fascia Oraria</span>
-                  <div className="metric-buttons">
-                    <button
-                      className={`metric-btn ${balanceMetric === 'total' ? 'active' : ''}`}
-                      onClick={() => setBalanceMetric('total')}
-                    >
-                      📊 Totale
-                    </button>
-                    <button
-                      className={`metric-btn ${balanceMetric === 'morning' ? 'active' : ''}`}
-                      onClick={() => setBalanceMetric('morning')}
-                    >
-                      🌅 Matt
-                    </button>
-                    <button
-                      className={`metric-btn ${balanceMetric === 'afternoon' ? 'active' : ''}`}
-                      onClick={() => setBalanceMetric('afternoon')}
-                    >
-                      🌇 Pom
-                    </button>
-                    <button
-                      className={`metric-btn ${balanceMetric === 'night' ? 'active' : ''}`}
-                      onClick={() => setBalanceMetric('night')}
-                    >
-                      🌙 Notte
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="metric-group">
-                  <span className="metric-group-label">Weekend / Critici</span>
-                  <div className="metric-buttons">
-                    <button
-                      className={`metric-btn ${balanceMetric === 'weekend' ? 'active' : ''}`}
-                      onClick={() => setBalanceMetric('weekend')}
-                    >
-                      🗓️ Weekend
-                    </button>
-                    <button
-                      className={`metric-btn ${balanceMetric === 'critical' ? 'active' : ''}`}
-                      onClick={() => setBalanceMetric('critical')}
-                    >
-                      ⚡ Critici
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="metric-group">
-                  <span className="metric-group-label">Sale Operative</span>
-                  <div className="metric-buttons metric-buttons-wrap">
-                    {rooms.map(room => (
-                      <button
-                        key={room.id}
-                        className={`metric-btn ${balanceMetric === `room-${room.id}` ? 'active' : ''}`}
-                        onClick={() => setBalanceMetric(`room-${room.id}`)}
-                        style={{ 
-                          borderColor: balanceMetric === `room-${room.id}` ? room.color : undefined,
-                          backgroundColor: balanceMetric === `room-${room.id}` ? `${room.color}20` : undefined
-                        }}
-                      >
-                        <span className="room-color-indicator" style={{ backgroundColor: room.color }}></span>
-                        {room.name.substring(0, 8)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                
-                {monthsCovered.length > 1 && (
-                  <div className="metric-group">
-                    <span className="metric-group-label">Mesi</span>
-                    <div className="metric-buttons metric-buttons-wrap">
-                      {monthsCovered.map(month => (
-                        <button
-                          key={month}
-                          className={`metric-btn ${balanceMetric === `month-${selectedYear}-${month}` ? 'active' : ''}`}
-                          onClick={() => setBalanceMetric(`month-${selectedYear}-${month}`)}
-                        >
-                          {monthNames[month - 1]}
-                        </button>
-                      ))}
+              <div className="rotation-summary">
+                {shiftTypeIndex.rotational.map(shiftType => {
+                  const values = stats.map(stat => stat.blocksByShiftType[shiftType.id] ?? 0);
+                  const total = values.reduce((sum, value) => sum + value, 0);
+                  const average = values.length > 0 ? total / values.length : 0;
+
+                  return (
+                    <div key={shiftType.id} className="rotation-card">
+                      <div className="rotation-card-head">
+                        <span className="dot" style={{ background: shiftType.color }} />
+                        <strong>{shiftType.name}</strong>
+                        <span className="hint">1 blocco = 1 {blockLabel(shiftType)}</span>
+                      </div>
+
+                      {total === 0 ? (
+                        <p className="hint">Nessun blocco assegnato nel {year}.</p>
+                      ) : (
+                        <ul className="rotation-rows">
+                          {[...stats]
+                            .sort((a, b) =>
+                              (b.blocksByShiftType[shiftType.id] ?? 0)
+                              - (a.blocksByShiftType[shiftType.id] ?? 0))
+                            .map(stat => {
+                              const value = stat.blocksByShiftType[shiftType.id] ?? 0;
+                              const difference = value - average;
+                              return (
+                                <li key={stat.doctorId}>
+                                  <span className="rotation-name">
+                                    <span className="dot" style={{ background: stat.doctorColor }} />
+                                    {stat.doctorName}
+                                  </span>
+                                  <span className="rotation-blocks">
+                                    {Array.from({ length: value }, (_, index) => (
+                                      <span
+                                        key={index}
+                                        className="rotation-block"
+                                        style={{ background: shiftType.color }}
+                                      />
+                                    ))}
+                                    {value === 0 && <span className="rotation-none">—</span>}
+                                  </span>
+                                  <span className="rotation-value">{value}</span>
+                                  <span className={`rotation-delta ${deviationClass(difference)}`}>
+                                    {difference > 0 ? '+' : ''}{difference.toFixed(1)}
+                                  </span>
+                                </li>
+                              );
+                            })}
+                        </ul>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          <section className="panel">
+            <div className="panel-header">
+              <h3>Dettaglio per dottore</h3>
+            </div>
+            <StatsTable stats={stats} columns={columns} />
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <h3>Bilanciamento</h3>
+                <p className="hint">
+                  Scegli una metrica per vedere come è distribuita fra i dottori.
+                </p>
               </div>
             </div>
-            
-            <div className="balance-charts">
-              {(() => {
-                const getValue = (stat: AggregatedDoctorStats): number => {
-                  if (balanceMetric === 'total') return stat.totalShifts;
-                  if (balanceMetric === 'morning') return stat.shiftsByTimeSlot['08:00-14:00'];
-                  if (balanceMetric === 'afternoon') return stat.shiftsByTimeSlot['14:00-20:00'];
-                  if (balanceMetric === 'night') return stat.shiftsByTimeSlot['20:00-08:00'];
-                  if (balanceMetric === 'weekend') return stat.weekendShifts;
-                  if (balanceMetric === 'critical') return stat.criticalShifts;
-                  if (balanceMetric.startsWith('room-')) {
-                    const roomId = balanceMetric.replace('room-', '');
-                    return stat.shiftsByRoom[roomId] || 0;
-                  }
-                  if (balanceMetric.startsWith('month-')) {
-                    const monthKey = balanceMetric.replace('month-', '');
-                    return stat.shiftsByMonth[monthKey] || 0;
-                  }
-                  return stat.totalShifts;
-                };
 
-                const values = aggregatedStats.map(getValue);
-                const maxValue = Math.max(...values);
-                const avgValue = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-                
-                const getMetricLabel = (): string => {
-                  if (balanceMetric === 'total') return 'Turni Totali';
-                  if (balanceMetric === 'morning') return 'Turni Mattina';
-                  if (balanceMetric === 'afternoon') return 'Turni Pomeriggio';
-                  if (balanceMetric === 'night') return 'Turni Notte';
-                  if (balanceMetric === 'weekend') return 'Turni Weekend';
-                  if (balanceMetric === 'critical') return 'Turni Critici';
-                  if (balanceMetric.startsWith('room-')) {
-                    const roomId = balanceMetric.replace('room-', '');
-                    const room = rooms.find(r => r.id === roomId);
-                    return room ? `Turni ${room.name}` : 'Turni Sala';
-                  }
-                  if (balanceMetric.startsWith('month-')) {
-                    const parts = balanceMetric.replace('month-', '').split('-');
-                    const monthNum = parseInt(parts[1]);
-                    return `Turni ${monthNamesFull[monthNum - 1]}`;
-                  }
-                  return 'Turni';
-                };
-
-                const sortedByMetric = [...sortedStats].sort((a, b) => getValue(b) - getValue(a));
-
-                return (
-                  <>
-                    <div className="balance-metric-label">{getMetricLabel()} — Media: {avgValue.toFixed(1)}</div>
-                    {sortedByMetric.map(stat => {
-                      const value = getValue(stat);
-                      const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
-                      const deviation = value - avgValue;
-                      const deviationClass = Math.abs(deviation) <= 1 ? 'balanced' : deviation > 0 ? 'high' : 'low';
-                      
-                      return (
-                        <div key={stat.doctorId} className="balance-bar-row">
-                          <span 
-                            className="bar-doctor-name"
-                            style={{ color: stat.doctorColor }}
-                          >
-                            {stat.doctorName}
-                          </span>
-                          <div className="bar-container">
-                            <div 
-                              className={`bar-fill ${deviationClass}`}
-                              style={{ 
-                                width: `${percentage}%`,
-                                backgroundColor: stat.doctorColor,
-                              }}
-                            ></div>
-                            <span className="bar-value">{value}</span>
-                          </div>
-                          <span className={`deviation ${deviationClass}`}>
-                            {deviation > 0 ? '+' : ''}{deviation.toFixed(1)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </>
-                );
-              })()}
+            <div className="metric-picker">
+              <button
+                type="button"
+                className={`metric-btn ${balanceMetric === 'shifts' ? 'active' : ''}`}
+                onClick={() => setBalanceMetric('shifts')}
+              >
+                Turni totali
+              </button>
+              {columns
+                .filter(column => column.key !== 'shifts' && column.group !== 'month')
+                .map(column => (
+                  <button
+                    key={column.key}
+                    type="button"
+                    className={`metric-btn ${balanceMetric === column.key ? 'active' : ''}`}
+                    style={column.color && balanceMetric === column.key
+                      ? { borderColor: column.color, background: `${column.color}22` }
+                      : undefined}
+                    onClick={() => setBalanceMetric(column.key)}
+                    title={column.title}
+                  >
+                    {column.color && (
+                      <span className="dot" style={{ background: column.color }} />
+                    )}
+                    {column.label}
+                    {column.subLabel && <span className="metric-unit">{column.subLabel}</span>}
+                  </button>
+                ))}
             </div>
-          </div>
+
+            {balance && metric && (
+              <div className="balance">
+                <p className="hint balance-caption">
+                  {metric.label}
+                  {metric.subLabel ? ` (${metric.subLabel})` : ''} — media {balance.average.toFixed(1)}
+                </p>
+
+                {balance.rows.map(row => (
+                  <div key={row.stat.doctorId} className="balance-row">
+                    <span className="balance-name" style={{ color: row.stat.doctorColor }}>
+                      {row.stat.doctorName}
+                    </span>
+                    <span className="balance-track">
+                      <span
+                        className="balance-fill"
+                        style={{ width: `${row.share}%`, background: row.stat.doctorColor }}
+                      />
+                      <span className="balance-value">{row.value}</span>
+                    </span>
+                    <span className={`balance-delta ${deviationClass(row.deviation)}`}>
+                      {row.deviation > 0 ? '+' : ''}{row.deviation.toFixed(1)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </>
       )}
     </div>
   );
 }
 
+/** Classifica lo scarto dalla media: entro un turno è considerato equilibrato. */
+function deviationClass(deviation: number): string {
+  if (Math.abs(deviation) <= 1) return 'balanced';
+  return deviation > 0 ? 'high' : 'low';
+}

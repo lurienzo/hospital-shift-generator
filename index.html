@@ -1,10 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>triuzzi.com</title>
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Generatore di turni ospedalieri: sale, fasce orarie configurabili, rotazioni e statistiche per servizio."
+    />
+    <title>Turni ospedale</title>
+
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z' fill='%233b82f6'/%3E%3C/svg%3E" />
+
+    <!--
+      Il font era importato con @import dentro il CSS, che ne rimanda il
+      caricamento a dopo il foglio di stile. Con preconnect e link parte subito.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&display=swap"
+    />
   </head>
   <body>
     <div id="root"></div>

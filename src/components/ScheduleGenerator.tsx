@@ -1,763 +1,653 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Doctor, OperativeRoom, MonthlySchedule, GenerationConfig, HolidayConfig, DoctorDateMode, Assignment, TimeSlot, WEEKDAYS, TIME_SLOTS, TIME_SLOT_TIME_LABELS } from '../models/types';
-import { ScheduleGeneratorService, GenerationProgress } from '../services/ScheduleGeneratorService';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Assignment,
+  DoctorDateMode,
+  GenerationConfig,
+  HolidayConfig,
+  MonthlySchedule,
+} from '../models/types';
+import {
+  EFFORT_PRESETS,
+  EffortLevel,
+  GenerationProgress,
+  ScheduleGeneratorService,
+} from '../services/ScheduleGeneratorService';
 import { StorageService } from '../services/StorageService';
-import { MONTH_NAMES_FULL, getYearRange } from '../utils/constants';
-import { generateId } from '../utils/idGenerator';
+import { buildRequirements } from '../domain/validation';
+import { useConfig } from '../state/configContext';
+import { MiniCalendar, MiniCalendarDayState } from './MiniCalendar';
+import { PrefilledGrid } from './PrefilledGrid';
+import { MONTH_NAMES, formatDayMonth, getYearRange } from '../utils/date';
 import './ScheduleGenerator.css';
 
 interface ScheduleGeneratorProps {
-  rooms: OperativeRoom[];
-  doctors: Doctor[];
   onScheduleGenerated: (schedule: MonthlySchedule) => void;
-  preselectedYear?: number | null;
-  preselectedMonth?: number | null;
+  preselected: { year: number; month: number } | null;
 }
 
-export function ScheduleGenerator({ rooms, doctors, onScheduleGenerated, preselectedYear, preselectedMonth }: ScheduleGeneratorProps) {
-  const currentDate = new Date();
-  const [year, setYear] = useState(preselectedYear ?? currentDate.getFullYear());
-  const [month, setMonth] = useState(preselectedMonth ?? currentDate.getMonth() + 1);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
-  const [holidays, setHolidays] = useState<HolidayConfig[]>([]);
-  const [doctorDateExclusions, setDoctorDateExclusions] = useState<Record<string, string[]>>({});
-  const [doctorDateAvailability, setDoctorDateAvailability] = useState<Record<string, string[]>>({});
-  const [doctorAvailabilityMode, setDoctorAvailabilityMode] = useState<Record<string, DoctorDateMode>>({});
-  const [prefilledAssignments, setPrefilledAssignments] = useState<Assignment[]>([]);
-  const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null);
-  const [editingHoliday, setEditingHoliday] = useState<string | null>(null);
+const EMPTY_CONFIG = {
+  holidays: [] as HolidayConfig[],
+  doctorDateExclusions: {} as Record<string, string[]>,
+  doctorDateAvailability: {} as Record<string, string[]>,
+  doctorAvailabilityMode: {} as Record<string, DoctorDateMode>,
+  prefilledAssignments: [] as Assignment[],
+};
+
+export function ScheduleGenerator({ onScheduleGenerated, preselected }: ScheduleGeneratorProps) {
+  const { rooms, doctors, shiftTypes, shiftTypeIndex, schemes } = useConfig();
+
+  const today = new Date();
+  const [year, setYear] = useState(preselected?.year ?? today.getFullYear());
+  const [month, setMonth] = useState(preselected?.month ?? today.getMonth() + 1);
+  const [effort, setEffort] = useState<EffortLevel>('standard');
   const [useYearBalance, setUseYearBalance] = useState(true);
-  const [pfSlot, setPfSlot] = useState<{ date: string; roomId: string; timeSlot: TimeSlot } | null>(null);
 
-  // Update year/month when preselected values change
+  const [monthConfig, setMonthConfig] = useState(EMPTY_CONFIG);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
+  const [editingHoliday, setEditingHoliday] = useState<string | null>(null);
+
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState<GenerationProgress | null>(null);
+  const [lastRun, setLastRun] = useState<{ gaps: number; errors: number; warnings: number } | null>(null);
+
   useEffect(() => {
-    if (preselectedYear !== null && preselectedYear !== undefined) {
-      setYear(preselectedYear);
+    if (preselected) {
+      setYear(preselected.year);
+      setMonth(preselected.month);
     }
-    if (preselectedMonth !== null && preselectedMonth !== undefined) {
-      setMonth(preselectedMonth);
-    }
-  }, [preselectedYear, preselectedMonth]);
+  }, [preselected]);
 
-  const monthNames = MONTH_NAMES_FULL;
-
-  const weekdayNames = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
-
-  const daysInMonth = useMemo(() => new Date(year, month, 0).getDate(), [year, month]);
-
-  const calendarDays = useMemo(() => {
-    const days: { day: number; dateStr: string; isWeekend: boolean; weekday: number }[] = [];
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(year, month - 1, day);
-      const weekday = date.getDay();
-      const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      days.push({ day, dateStr, isWeekend: weekday === 0 || weekday === 6, weekday });
-    }
-    return days;
-  }, [year, month, daysInMonth]);
-
-  const saveConfig = useCallback((
-    newHolidays: HolidayConfig[],
-    newExclusions: Record<string, string[]>,
-    newAvailability: Record<string, string[]>,
-    newModes: Record<string, DoctorDateMode>,
-    newPrefilled?: Assignment[],
-  ) => {
-    StorageService.saveGenerationConfig({
-      year,
-      month,
-      holidays: newHolidays,
-      doctorDateExclusions: newExclusions,
-      doctorDateAvailability: newAvailability,
-      doctorAvailabilityMode: newModes,
-      prefilledAssignments: newPrefilled ?? prefilledAssignments,
-    });
-  }, [year, month, prefilledAssignments]);
-
-  const loadMonthConfig = useCallback((targetYear: number, targetMonth: number) => {
-    const savedConfig = StorageService.loadGenerationConfig(targetYear, targetMonth);
-    if (savedConfig) {
-      setHolidays(savedConfig.holidays);
-      setDoctorDateExclusions(savedConfig.doctorDateExclusions);
-      setDoctorDateAvailability(savedConfig.doctorDateAvailability || {});
-      setDoctorAvailabilityMode(savedConfig.doctorAvailabilityMode || {});
-      setPrefilledAssignments(savedConfig.prefilledAssignments || []);
-    } else {
-      setHolidays([]);
-      setDoctorDateExclusions({});
-      setDoctorDateAvailability({});
-      setDoctorAvailabilityMode({});
-      setPrefilledAssignments([]);
-    }
-    setSelectedDoctor(null);
+  // La configurazione è per mese: cambiando mese si ricarica quella salvata.
+  useEffect(() => {
+    const stored = StorageService.loadGenerationConfig(year, month);
+    setMonthConfig(stored
+      ? {
+          holidays: stored.holidays,
+          doctorDateExclusions: stored.doctorDateExclusions,
+          doctorDateAvailability: stored.doctorDateAvailability,
+          doctorAvailabilityMode: stored.doctorAvailabilityMode,
+          prefilledAssignments: stored.prefilledAssignments,
+        }
+      : EMPTY_CONFIG);
+    setSelectedDoctorId(null);
     setEditingHoliday(null);
-  }, []);
+    setLastRun(null);
+  }, [year, month]);
 
-  useEffect(() => {
-    loadMonthConfig(year, month);
-  }, [year, month, loadMonthConfig]);
+  const persist = useCallback((changes: Partial<typeof EMPTY_CONFIG>) => {
+    setMonthConfig(current => {
+      const next = { ...current, ...changes };
+      StorageService.saveGenerationConfig({ year, month, ...next });
+      return next;
+    });
+  }, [year, month]);
 
-  const canGenerate = rooms.length > 0 && doctors.length > 0 && rooms.some(room => room.slots.length > 0);
+  const requirements = useMemo(
+    () => buildRequirements(rooms, year, month, monthConfig.holidays),
+    [rooms, year, month, monthConfig.holidays],
+  );
 
-  // Calculate prior stats for year balancing
-  const priorYearStats = useMemo(() => {
+  const priorYear = useMemo(() => {
     if (!useYearBalance || month === 1) return null;
-    
-    const getActiveScheduleForMonth = (targetYear: number, targetMonth: number) => {
-      const version = StorageService.getActiveVersion(targetYear, targetMonth);
-      return version?.schedule || null;
-    };
-
-    const result = ScheduleGeneratorService.calculatePriorYearStats(
+    return ScheduleGeneratorService.collectPriorYearStats({
       year,
-      month,
+      upToMonth: month,
       doctors,
       rooms,
-      getActiveScheduleForMonth
-    );
-
-    return result;
-  }, [useYearBalance, year, month, doctors, rooms]);
-
-  const getHolidayConfig = (dateStr: string): HolidayConfig | undefined => {
-    return holidays.find(h => h.date === dateStr);
-  };
-
-  const toggleHoliday = (dateStr: string) => {
-    const existing = getHolidayConfig(dateStr);
-    let newHolidays: HolidayConfig[];
-    if (existing) {
-      newHolidays = holidays.filter(h => h.date !== dateStr);
-      if (editingHoliday === dateStr) {
-        setEditingHoliday(null);
-      }
-    } else {
-      newHolidays = [...holidays, { date: dateStr, disabledRooms: [] }];
-    }
-    setHolidays(newHolidays);
-    saveConfig(newHolidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode);
-  };
-
-  const toggleHolidayRoom = (dateStr: string, roomId: string) => {
-    const newHolidays = holidays.map(h => {
-      if (h.date !== dateStr) return h;
-      const currentDisabledRooms = h.disabledRooms || [];
-      const disabledRooms = currentDisabledRooms.includes(roomId)
-        ? currentDisabledRooms.filter(r => r !== roomId)
-        : [...currentDisabledRooms, roomId];
-      return { ...h, disabledRooms };
+      shiftTypes: shiftTypeIndex,
+      loadSchedule: (targetYear, targetMonth) =>
+        StorageService.getActiveVersion(targetYear, targetMonth)?.schedule ?? null,
     });
-    setHolidays(newHolidays);
-    saveConfig(newHolidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode);
-  };
+  }, [useYearBalance, year, month, doctors, rooms, shiftTypeIndex]);
 
-  const toggleDoctorDateEntry = (doctorId: string, entry: string, field: 'exclusion' | 'availability') => {
-    if (field === 'exclusion') {
-      const current = doctorDateExclusions[doctorId] || [];
-      const datePrefix = entry.split(':')[0]; // "2026-04-15" from "2026-04-15:08:00-14:00"
-      let updated: string[];
-
-      if (entry.includes(':')) {
-        // Toggling a specific slot
-        if (current.includes(entry)) {
-          updated = current.filter(d => d !== entry);
-        } else if (current.includes(datePrefix)) {
-          // Full day is selected — replace with remaining individual slots
-          const otherSlots = TIME_SLOTS.filter(ts => `${datePrefix}:${ts}` !== entry).map(ts => `${datePrefix}:${ts}`);
-          updated = [...current.filter(d => d !== datePrefix), ...otherSlots];
-        } else {
-          updated = [...current, entry];
-        }
-      } else {
-        // Toggling a full day
-        const hasAny = current.includes(entry) || current.some(d => d.startsWith(`${entry}:`));
-        updated = hasAny
-          ? current.filter(d => d !== entry && !d.startsWith(`${entry}:`))
-          : [...current, entry];
-      }
-
-      const newExclusions = { ...doctorDateExclusions, [doctorId]: updated };
-      setDoctorDateExclusions(newExclusions);
-      saveConfig(holidays, newExclusions, doctorDateAvailability, doctorAvailabilityMode);
-    } else {
-      const current = doctorDateAvailability[doctorId] || [];
-      const datePrefix = entry.split(':')[0];
-      let updated: string[];
-
-      if (entry.includes(':')) {
-        if (current.includes(entry)) {
-          updated = current.filter(d => d !== entry);
-        } else if (current.includes(datePrefix)) {
-          const otherSlots = TIME_SLOTS.filter(ts => `${datePrefix}:${ts}` !== entry).map(ts => `${datePrefix}:${ts}`);
-          updated = [...current.filter(d => d !== datePrefix), ...otherSlots];
-        } else {
-          updated = [...current, entry];
-        }
-      } else {
-        const hasAny = current.includes(entry) || current.some(d => d.startsWith(`${entry}:`));
-        updated = hasAny
-          ? current.filter(d => d !== entry && !d.startsWith(`${entry}:`))
-          : [...current, entry];
-      }
-
-      const newAvailability = { ...doctorDateAvailability, [doctorId]: updated };
-      setDoctorDateAvailability(newAvailability);
-      saveConfig(holidays, doctorDateExclusions, newAvailability, doctorAvailabilityMode);
-    }
-  };
-
-  const isDaySelected = (doctorId: string, dateStr: string): 'full' | 'partial' | 'none' => {
-    const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
-    const list = mode === 'exclusion' ? (doctorDateExclusions[doctorId] || []) : (doctorDateAvailability[doctorId] || []);
-    if (list.includes(dateStr)) return 'full';
-    if (list.some(d => d.startsWith(`${dateStr}:`))) return 'partial';
-    return 'none';
-  };
-
-  const getSelectedSlots = (doctorId: string, dateStr: string): TimeSlot[] => {
-    const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
-    const list = mode === 'exclusion' ? (doctorDateExclusions[doctorId] || []) : (doctorDateAvailability[doctorId] || []);
-    if (list.includes(dateStr)) return [...TIME_SLOTS]; // full day = all slots
-    return TIME_SLOTS.filter(ts => list.includes(`${dateStr}:${ts}`));
-  };
-
-  const toggleDoctorMode = (doctorId: string, mode: DoctorDateMode) => {
-    const newModes = { ...doctorAvailabilityMode, [doctorId]: mode };
-    setDoctorAvailabilityMode(newModes);
-    saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, newModes);
-  };
-
-  const getSelectedDoctorMode = (): DoctorDateMode => {
-    if (!selectedDoctor) return 'exclusion';
-    return doctorAvailabilityMode[selectedDoctor] || 'exclusion';
-  };
-
-  const getDoctorDateCount = (doctorId: string): number => {
-    const mode = doctorAvailabilityMode[doctorId] || 'exclusion';
-    if (mode === 'availability') {
-      return doctorDateAvailability[doctorId]?.length || 0;
-    }
-    return doctorDateExclusions[doctorId]?.length || 0;
-  };
+  const canGenerate = rooms.length > 0 && doctors.length > 0 && requirements.length > 0;
 
   const handleGenerate = async () => {
-    if (!canGenerate) return;
+    if (!canGenerate || isGenerating) return;
 
     setIsGenerating(true);
-    setGenerationProgress(null);
+    setProgress(null);
+    setLastRun(null);
 
-    const config: GenerationConfig = {
-      year,
-      month,
-      holidays,
-      doctorDateExclusions,
-      doctorDateAvailability,
-      doctorAvailabilityMode,
-      prefilledAssignments,
-    };
-    
-    // Pass prior year stats if year balancing is enabled
-    const priorStats = useYearBalance && priorYearStats ? priorYearStats.stats : undefined;
-    const generator = new ScheduleGeneratorService(rooms, doctors, config, priorStats);
-    
+    const config: GenerationConfig = { year, month, ...monthConfig };
+
+    // Il mese precedente serve ai blocchi a rotazione che lo scavalcano.
+    const previous = month === 1
+      ? StorageService.getActiveVersion(year - 1, 12)
+      : StorageService.getActiveVersion(year, month - 1);
+
+    const generator = new ScheduleGeneratorService({
+      rooms,
+      doctors,
+      shiftTypes: shiftTypeIndex,
+      schemes,
+      config,
+      priorStats: useYearBalance ? priorYear?.stats : undefined,
+      priorAssignments: previous?.schedule.assignments,
+    });
+
     try {
-      const result = await generator.generateOptimized(300, (progress) => {
-        setGenerationProgress(progress);
+      const result = await generator.generate(EFFORT_PRESETS[effort].attempts, setProgress);
+      setLastRun({
+        gaps: result.coverageGaps,
+        errors: result.errors,
+        warnings: result.warnings,
       });
       onScheduleGenerated(result.schedule);
     } catch (error) {
-      console.error('Generation error:', error);
-      alert(`Errore durante la generazione: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Generazione non riuscita', error);
+      window.alert(
+        `La generazione non è riuscita: ${error instanceof Error ? error.message : String(error)}`,
+      );
     } finally {
       setIsGenerating(false);
-      setGenerationProgress(null);
+      setProgress(null);
     }
   };
 
-  const handleMonthChange = (newMonth: number) => {
-    setMonth(newMonth);
+  // ----- Festivi -----
+
+  const holidayAt = (date: string) => monthConfig.holidays.find(holiday => holiday.date === date);
+
+  const toggleHoliday = (date: string) => {
+    const existing = holidayAt(date);
+    if (existing) {
+      persist({ holidays: monthConfig.holidays.filter(holiday => holiday.date !== date) });
+      if (editingHoliday === date) setEditingHoliday(null);
+    } else {
+      persist({ holidays: [...monthConfig.holidays, { date, disabledRooms: [] }] });
+      setEditingHoliday(date);
+    }
   };
 
-  const handleYearChange = (newYear: number) => {
-    setYear(newYear);
+  const toggleHolidayRoom = (date: string, roomId: string) => {
+    persist({
+      holidays: monthConfig.holidays.map(holiday => holiday.date === date
+        ? {
+            ...holiday,
+            disabledRooms: holiday.disabledRooms.includes(roomId)
+              ? holiday.disabledRooms.filter(id => id !== roomId)
+              : [...holiday.disabledRooms, roomId],
+          }
+        : holiday),
+    });
   };
+
+  const holidayDayState = (date: string): MiniCalendarDayState => {
+    const holiday = holidayAt(date);
+    return {
+      selection: holiday ? 'full' : 'none',
+      color: '#f5a524',
+      highlighted: editingHoliday === date,
+      title: holiday
+        ? 'Festivo — clicca per rimuoverlo'
+        : 'Clicca per segnarlo come festivo',
+      marker: holiday && holiday.disabledRooms.length > 0
+        ? <span className="mini-day-marker">{holiday.disabledRooms.length}</span>
+        : undefined,
+    };
+  };
+
+  // ----- Disponibilità dei dottori -----
+
+  const doctorMode = (doctorId: string): DoctorDateMode =>
+    monthConfig.doctorAvailabilityMode[doctorId] ?? 'exclusion';
+
+  const doctorEntries = (doctorId: string): string[] => {
+    const mode = doctorMode(doctorId);
+    return (mode === 'exclusion'
+      ? monthConfig.doctorDateExclusions[doctorId]
+      : monthConfig.doctorDateAvailability[doctorId]) ?? [];
+  };
+
+  const setDoctorEntries = (doctorId: string, entries: string[]) => {
+    if (doctorMode(doctorId) === 'exclusion') {
+      persist({
+        doctorDateExclusions: { ...monthConfig.doctorDateExclusions, [doctorId]: entries },
+      });
+    } else {
+      persist({
+        doctorDateAvailability: { ...monthConfig.doctorDateAvailability, [doctorId]: entries },
+      });
+    }
+  };
+
+  /** Alterna la giornata intera, o una singola fascia se indicata. */
+  const toggleDoctorEntry = (doctorId: string, date: string, shiftTypeId?: string) => {
+    const entries = doctorEntries(doctorId);
+    const slotsOfDay = shiftTypes.map(shiftType => `${date}:${shiftType.id}`);
+
+    if (!shiftTypeId) {
+      const hasAny = entries.includes(date) || entries.some(entry => entry.startsWith(`${date}:`));
+      setDoctorEntries(doctorId, hasAny
+        ? entries.filter(entry => entry !== date && !entry.startsWith(`${date}:`))
+        : [...entries, date]);
+      return;
+    }
+
+    const entry = `${date}:${shiftTypeId}`;
+
+    if (entries.includes(entry)) {
+      setDoctorEntries(doctorId, entries.filter(other => other !== entry));
+      return;
+    }
+
+    if (entries.includes(date)) {
+      // La giornata intera era selezionata: la si scompone nelle altre fasce.
+      setDoctorEntries(doctorId, [
+        ...entries.filter(other => other !== date),
+        ...slotsOfDay.filter(slot => slot !== entry),
+      ]);
+      return;
+    }
+
+    const next = [...entries, entry];
+    const allSlots = slotsOfDay.every(slot => next.includes(slot));
+    setDoctorEntries(doctorId, allSlots
+      ? [...next.filter(other => !other.startsWith(`${date}:`)), date]
+      : next);
+  };
+
+  const dayShiftTypes = (doctorId: string, date: string): Set<string> => {
+    const entries = doctorEntries(doctorId);
+    if (entries.includes(date)) return new Set(shiftTypes.map(shiftType => shiftType.id));
+    return new Set(entries
+      .filter(entry => entry.startsWith(`${date}:`))
+      .map(entry => entry.slice(date.length + 1)));
+  };
+
+  const availabilityDayState = (doctorId: string, date: string): MiniCalendarDayState => {
+    const entries = doctorEntries(doctorId);
+    const mode = doctorMode(doctorId);
+    const doctor = doctors.find(candidate => candidate.id === doctorId);
+
+    const full = entries.includes(date);
+    const partial = !full && entries.some(entry => entry.startsWith(`${date}:`));
+
+    return {
+      selection: full ? 'full' : partial ? 'partial' : 'none',
+      color: mode === 'exclusion' ? (doctor?.color ?? '#f2585b') : '#10b981',
+      title: full || partial
+        ? 'Clicca per azzerare la giornata'
+        : mode === 'exclusion'
+          ? 'Clicca per escludere la giornata'
+          : 'Clicca per renderla disponibile',
+    };
+  };
+
+  const selectedDoctor = doctors.find(doctor => doctor.id === selectedDoctorId);
+  const editedHoliday = editingHoliday ? holidayAt(editingHoliday) : undefined;
 
   return (
-    <div className="schedule-generator">
-      <div className="generator-header">
-        <h2>Genera Calendario Turni</h2>
-        <p>Seleziona mese e anno, configura festivi e esclusioni, poi genera il calendario.</p>
-      </div>
-
-      <div className="generator-controls">
-        <div className="date-selector">
-          <div className="select-group">
-            <label>Mese</label>
-            <select value={month} onChange={event => handleMonthChange(Number(event.target.value))}>
-              {monthNames.map((name, index) => (
-                <option key={index} value={index + 1}>
-                  {name}
-                </option>
+    <div className="generator stack">
+      {/* ---------------- Comandi ---------------- */}
+      <section className="panel generator-controls">
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="gen-month">Mese</label>
+            <select
+              id="gen-month"
+              className="select"
+              value={month}
+              onChange={event => setMonth(Number(event.target.value))}
+            >
+              {MONTH_NAMES.map((name, index) => (
+                <option key={name} value={index + 1}>{name}</option>
               ))}
             </select>
           </div>
 
-          <div className="select-group">
-            <label>Anno</label>
-            <select value={year} onChange={event => handleYearChange(Number(event.target.value))}>
-              {getYearRange().map(yearOption => (
-                <option key={yearOption} value={yearOption}>
-                  {yearOption}
-                </option>
+          <div className="field field-narrow">
+            <label htmlFor="gen-year">Anno</label>
+            <select
+              id="gen-year"
+              className="select"
+              value={year}
+              onChange={event => setYear(Number(event.target.value))}
+            >
+              {getYearRange().map(option => (
+                <option key={option} value={option}>{option}</option>
               ))}
             </select>
           </div>
+
+          <div className="field">
+            <span className="label">Qualità della ricerca</span>
+            <div className="segmented">
+              {(Object.keys(EFFORT_PRESETS) as EffortLevel[]).map(level => (
+                <button
+                  key={level}
+                  type="button"
+                  className={effort === level ? 'active' : ''}
+                  onClick={() => setEffort(level)}
+                  title={`${EFFORT_PRESETS[level].attempts} tentativi`}
+                >
+                  {EFFORT_PRESETS[level].label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-accent btn-lg generate-button"
+            onClick={handleGenerate}
+            disabled={!canGenerate || isGenerating}
+          >
+            {isGenerating ? <><span className="spinner" />Generazione…</> : 'Genera calendario'}
+          </button>
         </div>
 
-        <button
-          className={`btn-generate ${isGenerating ? 'generating' : ''}`}
-          onClick={handleGenerate}
-          disabled={!canGenerate || isGenerating}
-        >
-          {isGenerating ? (
-            <>
-              <span className="spinner"></span>
-              Ottimizzazione...
-            </>
-          ) : (
-            '⚡ Genera Calendario Ottimizzato'
+        <div className="generator-facts">
+          <span><strong>{rooms.length}</strong> sale</span>
+          <span><strong>{doctors.length}</strong> dottori</span>
+          <span><strong>{requirements.length}</strong> turni da coprire</span>
+          {monthConfig.holidays.length > 0 && (
+            <span><strong>{monthConfig.holidays.length}</strong> festivi</span>
           )}
-        </button>
-      </div>
+          {monthConfig.prefilledAssignments.length > 0 && (
+            <span><strong>{monthConfig.prefilledAssignments.length}</strong> pre-compilati</span>
+          )}
+        </div>
 
-      <div className="year-balance-section">
-        <label className="year-balance-toggle">
+        <label className="checkbox">
           <input
             type="checkbox"
             checked={useYearBalance}
-            onChange={e => setUseYearBalance(e.target.checked)}
+            onChange={event => setUseYearBalance(event.target.checked)}
           />
-          <span className="toggle-label">
-            📊 Bilancia con statistiche anno {year}
-          </span>
+          <span>Bilancia tenendo conto dei mesi precedenti del {year}</span>
         </label>
+
         {useYearBalance && (
-          <div className="year-balance-info">
-            {month === 1 ? (
-              <span className="info-note">
-                ℹ️ Gennaio è il primo mese, non ci sono mesi precedenti da considerare.
-              </span>
-            ) : priorYearStats && priorYearStats.monthsCovered.length > 0 ? (
-              <span className="info-active">
-                ✅ Bilanciamento basato su: {priorYearStats.monthsCovered.map(m => monthNames[m - 1]).join(', ')}
-              </span>
-            ) : (
-              <span className="info-warning">
-                ⚠️ Nessuna versione attiva trovata per i mesi precedenti del {year}.
-                Salva versioni per Gen-{monthNames[month - 2]} per abilitare il bilanciamento.
-              </span>
+          <p className="hint">
+            {month === 1
+              ? 'Gennaio è il primo mese dell’anno: non ci sono mesi precedenti da considerare.'
+              : priorYear && priorYear.monthsCovered.length > 0
+                ? `Carico già accumulato in: ${priorYear.monthsCovered.map(m => MONTH_NAMES[m - 1]).join(', ')}.`
+                : `Nessuna versione attiva salvata per i mesi precedenti del ${year}: il bilanciamento parte da zero.`}
+          </p>
+        )}
+
+        {!canGenerate && (
+          <ul className="generator-blockers">
+            {rooms.length === 0 && <li>Aggiungi almeno una sala operativa.</li>}
+            {rooms.length > 0 && requirements.length === 0 && (
+              <li>Nessun turno configurato: apri una sala e definisci i turni della settimana.</li>
             )}
+            {doctors.length === 0 && <li>Aggiungi almeno un dottore.</li>}
+          </ul>
+        )}
+
+        {isGenerating && progress && (
+          <div className="progress">
+            <div className="progress-head">
+              <span>{progress.current} di {progress.total} tentativi</span>
+              <span>{progress.percentage}%</span>
+            </div>
+            <div className="progress-track">
+              <div className="progress-fill" style={{ width: `${progress.percentage}%` }} />
+            </div>
+            <div className="progress-detail">
+              <span>{progress.validSchedules} soluzioni senza errori</span>
+              {progress.bestScore !== null && (
+                <span>punteggio migliore {progress.bestScore.toFixed(1)}</span>
+              )}
+            </div>
           </div>
         )}
-      </div>
 
-      {isGenerating && generationProgress && (
-        <div className="generation-progress">
-          <div className="progress-header">
-            <span className="progress-title">🔄 Generazione in corso...</span>
-            <span className="progress-percentage">{generationProgress.percentage}%</span>
+        {lastRun && (
+          <div className={`run-summary ${lastRun.gaps === 0 && lastRun.errors === 0 ? 'ok' : 'attention'}`}>
+            {lastRun.gaps === 0 && lastRun.errors === 0
+              ? `Calendario generato senza errori${lastRun.warnings > 0 ? `, con ${lastRun.warnings} avvisi` : ''}.`
+              : `Calendario generato con ${lastRun.gaps} turni scoperti e ${lastRun.errors} errori. `
+                + 'Controlla disponibilità ed esclusioni, oppure prova con una ricerca più accurata.'}
           </div>
-          <div className="progress-bar-container">
-            <div 
-              className="progress-bar-fill" 
-              style={{ width: `${generationProgress.percentage}%` }}
-            ></div>
+        )}
+      </section>
+
+      {/* ---------------- Festivi ---------------- */}
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Festivi del mese</h3>
+            <p className="hint">
+              I festivi contano come weekend nel bilanciamento. Per ciascuno puoi indicare quali
+              sale restano chiuse.
+            </p>
           </div>
-          <div className="progress-stats">
-            <span>📊 {generationProgress.current.toLocaleString()} / {generationProgress.total.toLocaleString()} tentativi</span>
-            <span>✅ {generationProgress.validSchedules} schedules valide</span>
-            {generationProgress.bestCost !== null && (
-              <span>🎯 Costo migliore: {generationProgress.bestCost.toFixed(2)}</span>
-            )}
-          </div>
         </div>
-      )}
 
-      {!canGenerate && (
-        <div className="generator-warnings">
-          {rooms.length === 0 && (
-            <p className="warning">⚠️ Aggiungi almeno una sala operativa</p>
-          )}
-          {rooms.length > 0 && !rooms.some(room => room.slots.length > 0) && (
-            <p className="warning">⚠️ Configura almeno un turno per una sala</p>
-          )}
-          {doctors.length === 0 && (
-            <p className="warning">⚠️ Aggiungi almeno un dottore</p>
-          )}
-        </div>
-      )}
+        <div className="split">
+          <MiniCalendar
+            year={year}
+            month={month}
+            getDayState={holidayDayState}
+            onDayClick={date => {
+              if (holidayAt(date)) setEditingHoliday(editingHoliday === date ? null : date);
+              else toggleHoliday(date);
+            }}
+          />
 
-      <div className="generator-summary">
-        <div className="summary-item">
-          <span className="summary-value">{rooms.length}</span>
-          <span className="summary-label">Sale Operative</span>
-        </div>
-        <div className="summary-item">
-          <span className="summary-value">{doctors.length}</span>
-          <span className="summary-label">Dottori</span>
-        </div>
-        <div className="summary-item">
-          <span className="summary-value">
-            {rooms.reduce((total, room) => total + room.slots.length, 0)}
-          </span>
-          <span className="summary-label">Turni/Settimana</span>
-        </div>
-      </div>
-
-      <div className="month-config-section">
-        <div className="config-block holidays-config">
-          <h3>🎄 Festivi del Mese</h3>
-          <p className="config-description">
-            Clicca sui giorni per marcarli come festivi (contano come weekend).
-            Clicca di nuovo su un festivo per configurare i turni disabilitati.
-          </p>
-          <div className="mini-calendar">
-            <div className="mini-calendar-header">
-              {weekdayNames.map(name => (
-                <span key={name} className="mini-day-header">{name}</span>
-              ))}
-            </div>
-            <div className="mini-calendar-grid">
-              {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, index) => (
-                <span key={`empty-${index}`} className="mini-day empty"></span>
-              ))}
-              {calendarDays.map(({ day, dateStr, isWeekend }) => {
-                const holidayConfig = getHolidayConfig(dateStr);
-                const isHoliday = !!holidayConfig;
-                const isBeingEdited = editingHoliday === dateStr;
-                return (
+          <div className="split-side">
+            {editedHoliday ? (
+              <>
+                <div className="panel-header">
+                  <h4>{formatDayMonth(editedHoliday.date)}</h4>
                   <button
-                    key={day}
-                    className={`mini-day ${isWeekend || isHoliday ? 'weekend-or-holiday' : ''} ${isBeingEdited ? 'editing' : ''}`}
-                    onClick={() => {
-                      if (isHoliday && !isWeekend) {
-                        setEditingHoliday(editingHoliday === dateStr ? null : dateStr);
-                      } else if (!isWeekend) {
-                        toggleHoliday(dateStr);
-                      }
-                    }}
-                    title={isWeekend ? 'Weekend' : isHoliday ? 'Festivo - clicca per configurare sale' : 'Clicca per segnare come festivo'}
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={() => toggleHoliday(editedHoliday.date)}
                   >
-                    {day}
-                    {isHoliday && (holidayConfig!.disabledRooms || []).length > 0 && (
-                      <span className="disabled-indicator">{(holidayConfig!.disabledRooms || []).length}</span>
-                    )}
+                    Non è festivo
                   </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {editingHoliday && (
-            <div className="holiday-config-panel">
-              <div className="holiday-config-header">
-                <span>
-                  Configura festivo: <strong>{parseInt(editingHoliday.split('-')[2])} {monthNames[month - 1]}</strong>
-                </span>
-                <button className="btn-remove-holiday" onClick={() => { toggleHoliday(editingHoliday); }}>
-                  🗑️ Rimuovi festivo
-                </button>
-              </div>
-              <p className="config-hint">Seleziona le sale da disabilitare per questo giorno:</p>
-              <div className="room-toggles">
-                {rooms.map(room => {
-                  const holidayConfig = getHolidayConfig(editingHoliday);
-                  const isDisabled = (holidayConfig?.disabledRooms || []).includes(room.id);
-                  return (
-                    <button
-                      key={room.id}
-                      className={`room-toggle ${isDisabled ? 'disabled-room' : 'enabled-room'}`}
-                      style={{ borderColor: room.color }}
-                      onClick={() => toggleHolidayRoom(editingHoliday, room.id)}
-                    >
-                      <span className="room-name">{room.name}</span>
-                      <span className="room-status">{isDisabled ? '❌' : '✅'}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {holidays.length > 0 && !editingHoliday && (
-            <div className="selected-holidays">
-              <strong>Festivi:</strong>
-              {holidays.sort((a, b) => a.date.localeCompare(b.date)).map(holiday => {
-                const day = parseInt(holiday.date.split('-')[2]);
-                return (
-                  <span
-                    key={holiday.date}
-                    className="holiday-badge"
-                    onClick={() => setEditingHoliday(holiday.date)}
-                  >
-                    {day} {monthNames[month - 1]}
-                    {(holiday.disabledRooms || []).length > 0 && (
-                      <span className="disabled-count">-{(holiday.disabledRooms || []).length} sale</span>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="config-block doctor-exclusions-config">
-          <h3>📋 Disponibilita / Esclusioni per Dottore</h3>
-          <p className="config-description">Seleziona un dottore, scegli la modalita, e clicca sui giorni</p>
-
-          <div className="doctor-selector">
-            {doctors.map(doctor => {
-              const mode = doctorAvailabilityMode[doctor.id] || 'exclusion';
-              const count = getDoctorDateCount(doctor.id);
-              return (
-                <button
-                  key={doctor.id}
-                  className={`doctor-btn ${selectedDoctor === doctor.id ? 'active' : ''}`}
-                  style={{
-                    backgroundColor: selectedDoctor === doctor.id ? doctor.color : 'transparent',
-                    borderColor: doctor.color,
-                    color: selectedDoctor === doctor.id ? 'white' : doctor.color
-                  }}
-                  onClick={() => setSelectedDoctor(selectedDoctor === doctor.id ? null : doctor.id)}
-                >
-                  {doctor.name}
-                  {count > 0 && (
-                    <span className={mode === 'availability' ? 'availability-count' : 'exclusion-count'}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {selectedDoctor && (
-            <div className="doctor-date-exclusions">
-              <div className="mode-toggle">
-                <button
-                  className={`mode-btn ${getSelectedDoctorMode() === 'exclusion' ? 'active' : ''}`}
-                  onClick={() => toggleDoctorMode(selectedDoctor, 'exclusion')}
-                >
-                  🚫 Esclusioni
-                </button>
-                <button
-                  className={`mode-btn ${getSelectedDoctorMode() === 'availability' ? 'active' : ''}`}
-                  onClick={() => toggleDoctorMode(selectedDoctor, 'availability')}
-                >
-                  ✅ Disponibilita
-                </button>
-              </div>
-
-              {getSelectedDoctorMode() === 'availability' && (doctorDateAvailability[selectedDoctor]?.length || 0) === 0 && (
-                <p className="mode-hint">Clicca sui giorni in cui il dottore e disponibile. Se nessun giorno e selezionato, nessun vincolo viene applicato.</p>
-              )}
-
-              <div className="mini-calendar">
-                <div className="mini-calendar-header">
-                  {weekdayNames.map(name => (
-                    <span key={name} className="mini-day-header">{name}</span>
-                  ))}
                 </div>
-                <div className="mini-calendar-grid">
-                  {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, index) => (
-                    <span key={`empty-${index}`} className="mini-day empty"></span>
-                  ))}
-                  {calendarDays.map(({ day, dateStr, isWeekend }) => {
-                    const doctor = doctors.find(d => d.id === selectedDoctor);
-                    const holidayConfig = getHolidayConfig(dateStr);
-                    const isHoliday = !!holidayConfig;
-                    const isWeekendOrHoliday = isWeekend || isHoliday;
-                    const mode = getSelectedDoctorMode();
-                    const dayState = isDaySelected(selectedDoctor, dateStr);
-                    const selectedSlots = getSelectedSlots(selectedDoctor, dateStr);
-                    const isSelected = dayState !== 'none';
-
+                <span className="label">Sale chiuse in questo giorno</span>
+                <div className="row-wrap">
+                  {rooms.map(room => {
+                    const disabled = editedHoliday.disabledRooms.includes(room.id);
                     return (
                       <button
-                        key={day}
-                        className={`mini-day ${isWeekendOrHoliday ? 'weekend-or-holiday' : ''} ${dayState === 'full' ? (mode === 'exclusion' ? 'excluded' : 'available') : ''} ${dayState === 'partial' ? (mode === 'exclusion' ? 'excluded' : 'available') + ' partial' : ''}`}
-                        style={isSelected ? { backgroundColor: doctor?.color + (dayState === 'partial' ? '80' : '') } : {}}
-                        onClick={() => toggleDoctorDateEntry(selectedDoctor, dateStr, mode)}
-                        title={isSelected ? 'Clicca per rimuovere' : 'Clicca per selezionare'}
+                        key={room.id}
+                        type="button"
+                        className={`exclusion-pill ${disabled ? 'on' : ''}`}
+                        onClick={() => toggleHolidayRoom(editedHoliday.date, room.id)}
                       >
-                        {day}
-                        {isSelected && (
-                          <span className="mini-day-slots">
-                            {TIME_SLOTS.map(ts => {
-                              const slotActive = selectedSlots.includes(ts);
-                              const label = ts === '08:00-14:00' ? 'M' : ts === '14:00-20:00' ? 'P' : 'N';
-                              return (
-                                <span
-                                  key={ts}
-                                  className={`mini-slot-chip ${slotActive ? 'on' : 'off'}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleDoctorDateEntry(selectedDoctor, `${dateStr}:${ts}`, mode);
-                                  }}
-                                  title={`${TIME_SLOT_TIME_LABELS[ts]}: ${slotActive ? 'attivo' : 'non attivo'}`}
-                                >
-                                  {label}
-                                </span>
-                              );
-                            })}
-                          </span>
-                        )}
+                        <span className="dot" style={{ background: room.color }} />
+                        {room.name}
                       </button>
                     );
                   })}
+                  {rooms.length === 0 && <p className="hint">Nessuna sala configurata.</p>}
                 </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="config-block prefilled-config">
-          <h3>
-            🔒 Turni Pre-compilati
-            {prefilledAssignments.length > 0 && (
-              <span className="prefilled-count">{prefilledAssignments.length}</span>
+              </>
+            ) : monthConfig.holidays.length > 0 ? (
+              <>
+                <span className="label">Festivi impostati</span>
+                <div className="row-wrap">
+                  {[...monthConfig.holidays]
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .map(holiday => (
+                      <button
+                        key={holiday.date}
+                        type="button"
+                        className="badge badge-warning holiday-chip"
+                        onClick={() => setEditingHoliday(holiday.date)}
+                      >
+                        {formatDayMonth(holiday.date)}
+                        {holiday.disabledRooms.length > 0 && ` · −${holiday.disabledRooms.length} sale`}
+                      </button>
+                    ))}
+                </div>
+              </>
+            ) : (
+              <p className="hint">Nessun festivo impostato per questo mese.</p>
             )}
-          </h3>
-          <p className="config-description">
-            Clicca una cella per assegnare un dottore. Il turno restera fisso durante la generazione.
-          </p>
+          </div>
+        </div>
+      </section>
 
-          <div className="pf-grid-container">
-            <div className="pf-grid-header">
-              <div className="pf-grid-cell pf-day-col">G.</div>
-              {rooms.flatMap(room =>
-                room.slots
-                  .map(s => s.timeSlot)
-                  .filter((v, i, a) => a.indexOf(v) === i)
-                  .sort((a, b) => {
-                    const order: Record<string, number> = { '08:00-14:00': 0, '14:00-20:00': 1, '20:00-08:00': 2 };
-                    return (order[a] || 0) - (order[b] || 0);
-                  })
-                  .map(ts => {
-                    return (
-                      <div key={`${room.id}-${ts}`} className="pf-grid-cell pf-header-cell" style={{ color: room.color }}>
-                        {room.name}<span className="pf-slot-label">{TIME_SLOT_TIME_LABELS[ts as TimeSlot]}</span>
-                      </div>
-                    );
-                  })
-              )}
-            </div>
-            <div className="pf-grid-body">
-              {calendarDays.map(({ day, dateStr, isWeekend }) => {
-                const date = new Date(year, month - 1, day);
-                const weekday = WEEKDAYS[(date.getDay() + 6) % 7];
-                const wdLabel = weekdayNames[date.getDay()];
+      {/* ---------------- Disponibilità ---------------- */}
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Disponibilità e assenze del mese</h3>
+            <p className="hint">
+              Scegli un dottore e segna i giorni. Puoi lavorare sulla giornata intera o sulle
+              singole fasce, cliccando le sigle dentro il giorno.
+            </p>
+          </div>
+        </div>
+
+        {doctors.length === 0 ? (
+          <p className="hint">Nessun dottore configurato.</p>
+        ) : (
+          <>
+            <div className="row-wrap doctor-selector">
+              {doctors.map(doctor => {
+                const count = doctorEntries(doctor.id).length;
+                const mode = doctorMode(doctor.id);
                 return (
-                  <div key={day} className={`pf-grid-row ${isWeekend ? 'pf-weekend-row' : ''}`}>
-                    <div className="pf-grid-cell pf-day-col">
-                      <span className="pf-day-num">{day}</span>
-                      <span className="pf-day-wd">{wdLabel}</span>
-                    </div>
-                    {rooms.flatMap(room =>
-                      room.slots
-                        .map(s => s.timeSlot)
-                        .filter((v, i, a) => a.indexOf(v) === i)
-                        .sort((a, b) => {
-                          const order: Record<string, number> = { '08:00-14:00': 0, '14:00-20:00': 1, '20:00-08:00': 2 };
-                          return (order[a] || 0) - (order[b] || 0);
-                        })
-                        .map(ts => {
-                          const slot = room.slots.find(s => s.weekday === weekday && s.timeSlot === ts);
-                          if (!slot) {
-                            return <div key={`${room.id}-${ts}`} className="pf-grid-cell pf-cell-disabled" />;
-                          }
-
-                          const existing = prefilledAssignments.find(
-                            a => a.date === dateStr && a.roomId === room.id && a.timeSlot === ts
-                          );
-                          const isSelected = pfSlot?.date === dateStr && pfSlot?.roomId === room.id && pfSlot?.timeSlot === ts;
-                          const doc = existing ? doctors.find(d => d.id === existing.doctorId) : null;
-
-                          return (
-                            <div
-                              key={`${room.id}-${ts}`}
-                              className={`pf-grid-cell pf-cell ${isSelected ? 'pf-cell-selected' : ''} ${existing ? 'pf-cell-filled' : ''}`}
-                              onClick={() => {
-                                if (existing) {
-                                  const updated = prefilledAssignments.filter(pa => pa.id !== existing.id);
-                                  setPrefilledAssignments(updated);
-                                  saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
-                                  setPfSlot(null);
-                                } else {
-                                  setPfSlot(isSelected ? null : { date: dateStr, roomId: room.id, timeSlot: ts as TimeSlot });
-                                }
-                              }}
-                              title={existing ? `${doc?.name} — clicca per rimuovere` : 'Clicca per assegnare'}
-                            >
-                              {existing ? (
-                                <span className="pf-cell-doctor" style={{ color: doc?.color, borderColor: doc?.color }}>
-                                  {doc?.name || '?'}
-                                </span>
-                              ) : isSelected ? (
-                                <span className="pf-cell-empty">...</span>
-                              ) : (
-                                <span className="pf-cell-empty">+</span>
-                              )}
-                            </div>
-                          );
-                        })
+                  <button
+                    key={doctor.id}
+                    type="button"
+                    className={`doctor-pill ${selectedDoctorId === doctor.id ? 'on' : ''}`}
+                    style={selectedDoctorId === doctor.id
+                      ? { borderColor: doctor.color, background: `${doctor.color}22` }
+                      : undefined}
+                    onClick={() => setSelectedDoctorId(
+                      selectedDoctorId === doctor.id ? null : doctor.id)}
+                  >
+                    <span className="dot" style={{ background: doctor.color }} />
+                    {doctor.name}
+                    {count > 0 && (
+                      <span className={`badge ${mode === 'availability' ? 'badge-accent' : 'badge-danger'}`}>
+                        {count}
+                      </span>
                     )}
-                  </div>
+                  </button>
                 );
               })}
             </div>
-          </div>
 
-          {pfSlot && (
-            <div className="pf-doctor-picker">
-              <span className="pf-picker-label">
-                {parseInt(pfSlot.date.split('-')[2])} {monthNames[month - 1]} — {rooms.find(r => r.id === pfSlot.roomId)?.name} {TIME_SLOT_TIME_LABELS[pfSlot.timeSlot]}
-              </span>
-              <div className="pf-doctor-buttons">
-                {doctors.map(d => (
-                  <button
-                    key={d.id}
-                    className="pf-doctor-btn"
-                    style={{ borderColor: d.color, color: d.color }}
-                    onClick={() => {
-                      const room = rooms.find(r => r.id === pfSlot.roomId);
-                      if (!room) return;
-                      const newAssignment: Assignment = {
-                        id: generateId(),
-                        date: pfSlot.date,
-                        roomId: pfSlot.roomId,
-                        roomName: room.name,
-                        timeSlot: pfSlot.timeSlot,
-                        doctorId: d.id,
-                        doctorName: d.name,
-                        locked: true,
-                      };
-                      const updated = [...prefilledAssignments, newAssignment];
-                      setPrefilledAssignments(updated);
-                      saveConfig(holidays, doctorDateExclusions, doctorDateAvailability, doctorAvailabilityMode, updated);
-                      setPfSlot(null);
-                    }}
-                  >
-                    {d.name}
-                  </button>
-                ))}
-                <button className="pf-doctor-btn pf-cancel-btn" onClick={() => setPfSlot(null)}>✕</button>
+            {selectedDoctor && (
+              <div className="availability-editor">
+                <div className="row-wrap">
+                  <div className="segmented">
+                    <button
+                      type="button"
+                      className={doctorMode(selectedDoctor.id) === 'exclusion' ? 'active' : ''}
+                      onClick={() => persist({
+                        doctorAvailabilityMode: {
+                          ...monthConfig.doctorAvailabilityMode,
+                          [selectedDoctor.id]: 'exclusion',
+                        },
+                      })}
+                    >
+                      Assenze
+                    </button>
+                    <button
+                      type="button"
+                      className={doctorMode(selectedDoctor.id) === 'availability' ? 'active' : ''}
+                      onClick={() => persist({
+                        doctorAvailabilityMode: {
+                          ...monthConfig.doctorAvailabilityMode,
+                          [selectedDoctor.id]: 'availability',
+                        },
+                      })}
+                    >
+                      Solo disponibilità
+                    </button>
+                  </div>
+
+                  {doctorEntries(selectedDoctor.id).length > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => setDoctorEntries(selectedDoctor.id, [])}
+                    >
+                      Azzera
+                    </button>
+                  )}
+                </div>
+
+                <p className="hint">
+                  {doctorMode(selectedDoctor.id) === 'exclusion'
+                    ? `I giorni segnati sono quelli in cui ${selectedDoctor.name} non è disponibile.`
+                    : `Sono segnati i giorni in cui ${selectedDoctor.name} è disponibile: fuori da questi non verrà assegnato. Un elenco vuoto non applica nessun vincolo.`}
+                </p>
+
+                <MiniCalendar
+                  year={year}
+                  month={month}
+                  getDayState={date => availabilityDayState(selectedDoctor.id, date)}
+                  onDayClick={date => toggleDoctorEntry(selectedDoctor.id, date)}
+                  renderDayDetail={date => {
+                    const active = dayShiftTypes(selectedDoctor.id, date);
+                    if (active.size === 0) return null;
+                    return (
+                      <span className="mini-day-slots">
+                        {shiftTypes.map(shiftType => (
+                          <span
+                            key={shiftType.id}
+                            role="button"
+                            tabIndex={-1}
+                            className={`mini-slot ${active.has(shiftType.id) ? 'on' : ''}`}
+                            title={`${shiftType.name} ${shiftType.start}-${shiftType.end}`}
+                            onClick={event => {
+                              event.stopPropagation();
+                              toggleDoctorEntry(selectedDoctor.id, date, shiftType.id);
+                            }}
+                          >
+                            {shiftType.code}
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  }}
+                />
               </div>
-            </div>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* ---------------- Turni pre-compilati ---------------- */}
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>
+              Turni fissati
+              {monthConfig.prefilledAssignments.length > 0 && (
+                <span className="badge badge-primary">{monthConfig.prefilledAssignments.length}</span>
+              )}
+            </h3>
+            <p className="hint">
+              Assegnazioni decise a mano che la generazione non modifica.
+            </p>
+          </div>
+          {monthConfig.prefilledAssignments.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => persist({ prefilledAssignments: [] })}
+            >
+              Rimuovi tutti
+            </button>
           )}
-      </div>
+        </div>
+
+        <PrefilledGrid
+          year={year}
+          month={month}
+          rooms={rooms}
+          doctors={doctors}
+          shiftTypes={shiftTypeIndex}
+          assignments={monthConfig.prefilledAssignments}
+          onChange={assignments => persist({ prefilledAssignments: assignments })}
+        />
+      </section>
     </div>
   );
 }

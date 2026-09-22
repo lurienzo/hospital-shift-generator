@@ -1,0 +1,215 @@
+.rotation {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.rotation-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.rotation-config {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding: 0.875rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.rotation-config .field-narrow {
+  flex: 0 0 auto;
+  min-width: 110px;
+}
+
+/* ----- Gruppi di giorni ----- */
+
+.day-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.day-group {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.day-group-index {
+  min-width: 68px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.day-toggles {
+  display: flex;
+  gap: 0.1875rem;
+}
+
+.day-toggle {
+  min-width: 38px;
+  padding: 0.25rem 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.day-toggle:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.day-toggle.on {
+  background: var(--primary-strong);
+  border-color: var(--primary-strong);
+  color: #fff;
+}
+
+.day-toggle:disabled {
+  opacity: 0.3;
+}
+
+/* ----- Ciclo turni ----- */
+
+.doctor-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.doctor-pill:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.doctor-pill.on {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cycle-order {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  max-width: 320px;
+}
+
+.cycle-order li {
+  display: flex;
+  align-items: center;
+  gap: 0.4375rem;
+  padding: 0.1875rem 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.cycle-position {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.cycle-doctor-name {
+  flex: 1;
+  font-size: 0.8125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ----- Anteprima ciclo ----- */
+
+.cycle-preview-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.cycle-preview {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.6875rem;
+}
+
+.cycle-preview th,
+.cycle-preview td {
+  padding: 0.25rem 0.375rem;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cycle-preview tbody tr:last-child th,
+.cycle-preview tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cycle-preview thead th {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.cycle-preview thead th.weekend {
+  color: #fcd34d;
+}
+
+.cycle-preview tbody th {
+  display: table-cell;
+  gap: 0.375rem;
+  min-width: 110px;
+  padding-left: 0.5rem;
+  background: var(--surface-2);
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cycle-preview tbody th .dot {
+  display: inline-block;
+  margin-right: 0.375rem;
+  vertical-align: middle;
+}
+
+.cycle-preview td {
+  min-width: 24px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cycle-preview td.off {
+  color: var(--text-faint);
+  font-weight: 400;
+  background: rgba(148, 163, 184, 0.06);
+}

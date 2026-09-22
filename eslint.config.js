@@ -1,20 +1,24 @@
-import js from '@eslint/js'
-import globals from 'globals'
-import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
-import { defineConfig, globalIgnores } from 'eslint/config'
+import js from '@eslint/js';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+import reactHooks from 'eslint-plugin-react-hooks';
+import reactRefresh from 'eslint-plugin-react-refresh';
+import { defineConfig, globalIgnores } from 'eslint/config';
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', 'coverage']),
   {
-    files: ['**/*.{js,jsx}'],
+    // La configurazione precedente si applicava solo a .js/.jsx, quindi non
+    // analizzava nessun file del progetto.
+    files: ['**/*.{ts,tsx}'],
     extends: [
       js.configs.recommended,
-      reactHooks.configs.flat.recommended,
+      tseslint.configs.recommended,
+      reactHooks.configs.flat['recommended-latest'],
       reactRefresh.configs.vite,
     ],
     languageOptions: {
-      ecmaVersion: 2020,
+      ecmaVersion: 2022,
       globals: globals.browser,
       parserOptions: {
         ecmaVersion: 'latest',
@@ -23,7 +27,13 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+      }],
+      'prefer-const': 'error',
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      eqeqeq: ['error', 'always'],
     },
   },
-])
+]);

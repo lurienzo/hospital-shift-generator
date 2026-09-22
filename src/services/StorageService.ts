@@ -1,108 +1,245 @@
-import { OperativeRoom, Doctor, MonthlySchedule, HolidayConfig, ScheduleVersion, getMonthKey, DoctorDateMode, Assignment, TIME_SLOT_TIME_LABELS } from '../models/types';
-import { generateId } from '../utils/idGenerator';
-import { parseDateLocal } from '../utils/constants';
+import {
+  Assignment,
+  DEFAULT_SHIFT_TYPES,
+  Doctor,
+  GenerationConfig,
+  MonthlySchedule,
+  OperativeRoom,
+  ScheduleSlot,
+  ScheduleVersion,
+  ShiftScheme,
+  ShiftType,
+} from '../models/types';
+import { ShiftTypeIndex, sortShiftTypes } from '../domain/shiftTypes';
+import { computeStats, buildStatColumns, summarizeColumns } from '../domain/stats';
+import { RoomSlotIndex } from '../domain/validation';
+import { DATA_SCOPES, DataScope, ServiceRegistry } from './ServiceRegistry';
+import { generateId } from '../utils/id';
+import {
+  WEEKDAY_SHORT_BY_INDEX,
+  buildMonthDays,
+  formatMonthLabel,
+  monthKey,
+} from '../utils/date';
 
-const STORAGE_KEYS = {
-  ROOMS: 'hospital_shift_rooms',
-  DOCTORS: 'hospital_shift_doctors',
-  SCHEDULE: 'hospital_shift_schedule',
-  SCHEDULE_VERSIONS: 'hospital_shift_schedule_versions',
-  GENERATION_CONFIG: 'hospital_shift_generation_config',
-};
-
-export interface StoredGenerationConfig {
-  year: number;
-  month: number;
-  holidays: HolidayConfig[];
-  doctorDateExclusions: Record<string, string[]>;
-  doctorDateAvailability: Record<string, string[]>;
-  doctorAvailabilityMode: Record<string, DoctorDateMode>;
-  prefilledAssignments?: Assignment[];
+/**
+ * Ogni dato appartiene al servizio attivo: la chiave di storage viene
+ * risolta al momento dell'accesso, così cambiare servizio isola
+ * completamente sale, medici, calendari e statistiche.
+ */
+function keyOf(scope: DataScope): string {
+  return ServiceRegistry.scopedKey(scope, ServiceRegistry.getActiveId());
 }
 
-export class StorageService {
-  static saveRooms(rooms: OperativeRoom[]): void {
-    localStorage.setItem(STORAGE_KEYS.ROOMS, JSON.stringify(rooms));
+/**
+ * Lettura difensiva: una voce corrotta o scritta da una versione precedente
+ * non deve impedire l'avvio dell'applicazione.
+ */
+function read<T>(scope: DataScope, fallback: T): T {
+  const key = keyOf(scope);
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed === null || parsed === undefined ? fallback : (parsed as T);
+  } catch (error) {
+    console.warn(`Dati non leggibili per "${key}", uso i valori predefiniti.`, error);
+    return fallback;
   }
+}
+
+function write(scope: DataScope, value: unknown): void {
+  try {
+    localStorage.setItem(keyOf(scope), JSON.stringify(value));
+  } catch (error) {
+    console.error(
+      `Impossibile salvare "${scope}". Lo spazio del browser potrebbe essere esaurito.`,
+      error,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Marcatore di codifica UTF-8 richiesto da Excel per interpretare
+ * correttamente le lettere accentate nei file CSV. Espresso come codice
+ * numerico per non lasciare nel sorgente un carattere invisibile.
+ */
+const BYTE_ORDER_MARK = String.fromCharCode(0xfeff);
+
+// ---------------------------------------------------------------------------
+// Normalizzazione dei dati salvati
+//
+// Le versioni precedenti memorizzavano la fascia oraria nel campo `timeSlot`.
+// Gli id delle fasce predefinite coincidono con quei valori, quindi basta
+// rinominare il campo: la conversione è idempotente e avviene a ogni lettura,
+// senza migrazioni distruttive.
+// ---------------------------------------------------------------------------
+
+type LegacyAssignment = Assignment & { timeSlot?: string };
+type LegacySlot = ScheduleSlot & { timeSlot?: string };
+
+function normalizeAssignment(assignment: LegacyAssignment): Assignment {
+  const { timeSlot, ...rest } = assignment;
+  return { ...rest, shiftTypeId: rest.shiftTypeId ?? timeSlot ?? '' };
+}
+
+function normalizeSlot(slot: LegacySlot): ScheduleSlot {
+  const { timeSlot, ...rest } = slot;
+  return {
+    id: rest.id ?? generateId(),
+    weekday: rest.weekday,
+    shiftTypeId: rest.shiftTypeId ?? timeSlot ?? '',
+    isCritical: rest.isCritical ?? false,
+    requiresNextDayRest: rest.requiresNextDayRest ?? false,
+    requiresSecondDayRest: rest.requiresSecondDayRest ?? false,
+    isFullDayExclusive: rest.isFullDayExclusive ?? false,
+  };
+}
+
+function normalizeRoom(room: OperativeRoom): OperativeRoom {
+  const normalized: OperativeRoom = {
+    ...room,
+    slots: (room.slots ?? []).map(normalizeSlot).filter(slot => slot.shiftTypeId !== ''),
+    dayGroups: room.dayGroups ?? [],
+  };
+
+  // Una sala non può avere due modalità di rotazione insieme: se i dati
+  // salvati ne contengono più di una vince quella più specifica.
+  if (normalized.cycle && normalized.cycle.doctorIds?.length) {
+    return { ...normalized, dayGroups: [], consecutiveShifts: undefined, consecutiveStartDay: undefined };
+  }
+  if (normalized.dayGroups.length > 0) {
+    return { ...normalized, cycle: undefined, consecutiveShifts: undefined, consecutiveStartDay: undefined };
+  }
+  return { ...normalized, cycle: undefined };
+}
+
+function normalizeSchedule(schedule: MonthlySchedule): MonthlySchedule {
+  return {
+    ...schedule,
+    holidays: schedule.holidays ?? [],
+    assignments: (schedule.assignments ?? []).map(normalizeAssignment),
+  };
+}
+
+// ---------------------------------------------------------------------------
+
+export class StorageService {
+  // ----- Fasce orarie -----
+
+  static loadShiftTypes(): ShiftType[] {
+    const stored = read<ShiftType[]>('shiftTypes', []);
+    if (!Array.isArray(stored) || stored.length === 0) return [...DEFAULT_SHIFT_TYPES];
+    return sortShiftTypes(stored);
+  }
+
+  static saveShiftTypes(shiftTypes: ShiftType[]): void {
+    write('shiftTypes', sortShiftTypes(shiftTypes));
+  }
+
+  // ----- Schemi turni -----
+
+  /** Solo gli schemi creati dall'utente: i predefiniti si derivano dalle fasce. */
+  static loadCustomSchemes(): ShiftScheme[] {
+    return read<ShiftScheme[]>('schemes', []).filter(scheme => !scheme.builtIn);
+  }
+
+  static saveCustomSchemes(schemes: ShiftScheme[]): void {
+    write('schemes', schemes.filter(scheme => !scheme.builtIn));
+  }
+
+  // ----- Sale e medici -----
 
   static loadRooms(): OperativeRoom[] {
-    const data = localStorage.getItem(STORAGE_KEYS.ROOMS);
-    return data ? JSON.parse(data) : [];
+    return read<OperativeRoom[]>('rooms', []).map(normalizeRoom);
   }
 
-  static saveDoctors(doctors: Doctor[]): void {
-    localStorage.setItem(STORAGE_KEYS.DOCTORS, JSON.stringify(doctors));
+  static saveRooms(rooms: OperativeRoom[]): void {
+    write('rooms', rooms);
   }
 
   static loadDoctors(): Doctor[] {
-    const data = localStorage.getItem(STORAGE_KEYS.DOCTORS);
-    return data ? JSON.parse(data) : [];
+    return read<Doctor[]>('doctors', []).map(doctor => ({
+      ...doctor,
+      excludedRooms: doctor.excludedRooms ?? [],
+      excludedWeekdays: doctor.excludedWeekdays ?? [],
+    }));
+  }
+
+  static saveDoctors(doctors: Doctor[]): void {
+    write('doctors', doctors);
+  }
+
+  // ----- Calendario corrente -----
+
+  static loadSchedule(): MonthlySchedule | null {
+    const stored = read<MonthlySchedule | null>('schedule', null);
+    return stored ? normalizeSchedule(stored) : null;
   }
 
   static saveSchedule(schedule: MonthlySchedule): void {
-    localStorage.setItem(STORAGE_KEYS.SCHEDULE, JSON.stringify(schedule));
+    write('schedule', schedule);
   }
 
-  static loadSchedule(): MonthlySchedule | null {
-    const data = localStorage.getItem(STORAGE_KEYS.SCHEDULE);
-    return data ? JSON.parse(data) : null;
+  static clearSchedule(): void {
+    localStorage.removeItem(keyOf('schedule'));
   }
 
-  static saveGenerationConfig(config: StoredGenerationConfig): void {
-    const allConfigs = this.loadAllGenerationConfigs();
-    const key = `${config.year}-${config.month}`;
-    allConfigs[key] = config;
-    localStorage.setItem(STORAGE_KEYS.GENERATION_CONFIG, JSON.stringify(allConfigs));
-  }
+  // ----- Configurazione di generazione -----
 
-  static loadGenerationConfig(year: number, month: number): StoredGenerationConfig | null {
-    const allConfigs = this.loadAllGenerationConfigs();
-    const key = `${year}-${month}`;
-    const config = allConfigs[key];
+  static loadGenerationConfig(year: number, month: number): GenerationConfig | null {
+    const all = read<Record<string, GenerationConfig>>('generationConfig', {});
+    const config = all[monthKey(year, month)];
     if (!config) return null;
-    // Backfill fields for backward compatibility with older saved configs
-    config.doctorDateAvailability = config.doctorDateAvailability || {};
-    config.doctorAvailabilityMode = config.doctorAvailabilityMode || {};
-    config.prefilledAssignments = config.prefilledAssignments || [];
-    return config;
+
+    return {
+      year,
+      month,
+      holidays: (config.holidays ?? []).map(holiday => ({
+        date: holiday.date,
+        disabledRooms: holiday.disabledRooms ?? [],
+      })),
+      doctorDateExclusions: config.doctorDateExclusions ?? {},
+      doctorDateAvailability: config.doctorDateAvailability ?? {},
+      doctorAvailabilityMode: config.doctorAvailabilityMode ?? {},
+      prefilledAssignments: (config.prefilledAssignments ?? []).map(normalizeAssignment),
+    };
   }
 
-  private static loadAllGenerationConfigs(): Record<string, StoredGenerationConfig> {
-    const data = localStorage.getItem(STORAGE_KEYS.GENERATION_CONFIG);
-    return data ? JSON.parse(data) : {};
+  static saveGenerationConfig(config: GenerationConfig): void {
+    const all = read<Record<string, GenerationConfig>>('generationConfig', {});
+    all[monthKey(config.year, config.month)] = config;
+    write('generationConfig', all);
   }
 
-  // ========== Schedule Versions ==========
+  // ----- Versioni del calendario -----
 
-  static loadAllScheduleVersions(): Record<string, ScheduleVersion[]> {
-    const data = localStorage.getItem(STORAGE_KEYS.SCHEDULE_VERSIONS);
-    return data ? JSON.parse(data) : {};
-  }
-
-  private static saveAllScheduleVersions(versions: Record<string, ScheduleVersion[]>): void {
-    localStorage.setItem(STORAGE_KEYS.SCHEDULE_VERSIONS, JSON.stringify(versions));
-  }
-
-  static loadScheduleVersionsForMonth(year: number, month: number): ScheduleVersion[] {
-    const allVersions = this.loadAllScheduleVersions();
-    const key = getMonthKey(year, month);
-    return allVersions[key] || [];
-  }
-
-  static saveScheduleVersion(schedule: MonthlySchedule, name: string, setActive: boolean = true): ScheduleVersion {
-    const allVersions = this.loadAllScheduleVersions();
-    const key = getMonthKey(schedule.year, schedule.month);
-    
-    if (!allVersions[key]) {
-      allVersions[key] = [];
+  private static loadAllVersions(): Record<string, ScheduleVersion[]> {
+    const all = read<Record<string, ScheduleVersion[]>>('versions', {});
+    for (const [key, versions] of Object.entries(all)) {
+      all[key] = versions.map(version => ({
+        ...version,
+        schedule: normalizeSchedule(version.schedule),
+      }));
     }
+    return all;
+  }
 
-    // If setActive, deactivate all other versions for this month
-    if (setActive) {
-      allVersions[key] = allVersions[key].map(v => ({ ...v, isActive: false }));
-    }
+  private static saveAllVersions(all: Record<string, ScheduleVersion[]>): void {
+    write('versions', all);
+  }
 
-    const newVersion: ScheduleVersion = {
+  static loadVersionsForMonth(year: number, month: number): ScheduleVersion[] {
+    return this.loadAllVersions()[monthKey(year, month)] ?? [];
+  }
+
+  static createVersion(schedule: MonthlySchedule, name: string, setActive = true): ScheduleVersion {
+    const all = this.loadAllVersions();
+    const key = monthKey(schedule.year, schedule.month);
+    const existing = all[key] ?? [];
+
+    const version: ScheduleVersion = {
       id: generateId(),
       name,
       schedule,
@@ -110,491 +247,221 @@ export class StorageService {
       isActive: setActive,
     };
 
-    allVersions[key].push(newVersion);
-    this.saveAllScheduleVersions(allVersions);
+    all[key] = setActive
+      ? [...existing.map(other => ({ ...other, isActive: false })), version]
+      : [...existing, version];
 
-    // Also update the current schedule if this is active
-    if (setActive) {
-      this.saveSchedule(schedule);
-    }
+    this.saveAllVersions(all);
+    if (setActive) this.saveSchedule(schedule);
 
-    return newVersion;
+    return version;
+  }
+
+  static updateVersion(year: number, month: number, versionId: string, changes: {
+    schedule?: MonthlySchedule;
+    name?: string;
+  }): void {
+    const all = this.loadAllVersions();
+    const key = monthKey(year, month);
+    if (!all[key]) return;
+
+    all[key] = all[key].map(version =>
+      version.id === versionId
+        ? {
+            ...version,
+            schedule: changes.schedule ?? version.schedule,
+            name: changes.name ?? version.name,
+          }
+        : version,
+    );
+
+    this.saveAllVersions(all);
+
+    const updated = all[key].find(version => version.id === versionId);
+    if (updated?.isActive) this.saveSchedule(updated.schedule);
   }
 
   static setActiveVersion(year: number, month: number, versionId: string): ScheduleVersion | null {
-    const allVersions = this.loadAllScheduleVersions();
-    const key = getMonthKey(year, month);
-    
-    if (!allVersions[key]) return null;
+    const all = this.loadAllVersions();
+    const key = monthKey(year, month);
+    if (!all[key]) return null;
 
-    allVersions[key] = allVersions[key].map(v => ({ ...v, isActive: v.id === versionId }));
+    all[key] = all[key].map(version => ({ ...version, isActive: version.id === versionId }));
+    this.saveAllVersions(all);
 
-    this.saveAllScheduleVersions(allVersions);
-
-    // Find and return the active version, update current schedule
-    const activeVersion = allVersions[key].find(v => v.isActive);
-    if (activeVersion) {
-      this.saveSchedule(activeVersion.schedule);
-    }
-
-    return activeVersion || null;
+    const active = all[key].find(version => version.isActive) ?? null;
+    if (active) this.saveSchedule(active.schedule);
+    return active;
   }
 
   static getActiveVersion(year: number, month: number): ScheduleVersion | null {
-    const versions = this.loadScheduleVersionsForMonth(year, month);
-    return versions.find(v => v.isActive) || null;
+    return this.loadVersionsForMonth(year, month).find(version => version.isActive) ?? null;
   }
 
-  static deleteScheduleVersion(year: number, month: number, versionId: string): void {
-    const allVersions = this.loadAllScheduleVersions();
-    const key = getMonthKey(year, month);
-    
-    if (!allVersions[key]) return;
+  static deleteVersion(year: number, month: number, versionId: string): void {
+    const all = this.loadAllVersions();
+    const key = monthKey(year, month);
+    if (!all[key]) return;
 
-    const deletedVersion = allVersions[key].find(v => v.id === versionId);
-    allVersions[key] = allVersions[key].filter(v => v.id !== versionId);
+    const deleted = all[key].find(version => version.id === versionId);
+    all[key] = all[key].filter(version => version.id !== versionId);
 
-    // If we deleted the active version and there are others, activate the first one
-    if (deletedVersion?.isActive && allVersions[key].length > 0) {
-      allVersions[key][0].isActive = true;
-      this.saveSchedule(allVersions[key][0].schedule);
+    // Un mese non resta senza versione attiva: se ne restano altre, la prima
+    // prende il posto di quella eliminata.
+    if (deleted?.isActive && all[key].length > 0) {
+      all[key][0] = { ...all[key][0], isActive: true };
+      this.saveSchedule(all[key][0].schedule);
+    } else if (all[key].length === 0) {
+      this.clearSchedule();
     }
 
-    this.saveAllScheduleVersions(allVersions);
-  }
-
-  static updateScheduleVersion(year: number, month: number, versionId: string, schedule: MonthlySchedule): void {
-    const allVersions = this.loadAllScheduleVersions();
-    const key = getMonthKey(year, month);
-    
-    if (!allVersions[key]) return;
-
-    allVersions[key] = allVersions[key].map(v => {
-      if (v.id !== versionId) return v;
-      return { ...v, schedule };
-    });
-
-    this.saveAllScheduleVersions(allVersions);
-
-    // Update current schedule if this is the active version
-    const updatedVersion = allVersions[key].find(v => v.id === versionId);
-    if (updatedVersion?.isActive) {
-      this.saveSchedule(schedule);
-    }
-  }
-
-  static renameScheduleVersion(year: number, month: number, versionId: string, newName: string): void {
-    const allVersions = this.loadAllScheduleVersions();
-    const key = getMonthKey(year, month);
-    
-    if (!allVersions[key]) return;
-
-    allVersions[key] = allVersions[key].map(v => {
-      if (v.id !== versionId) return v;
-      return { ...v, name: newName };
-    });
-
-    this.saveAllScheduleVersions(allVersions);
+    this.saveAllVersions(all);
   }
 
   static getAllActiveVersions(): ScheduleVersion[] {
-    const allVersions = this.loadAllScheduleVersions();
-    const activeVersions: ScheduleVersion[] = [];
-
-    for (const monthKey of Object.keys(allVersions)) {
-      const active = allVersions[monthKey].find(v => v.isActive);
-      if (active) {
-        activeVersions.push(active);
-      }
-    }
-
-    // Sort by date
-    return activeVersions.sort((a, b) => {
-      const aKey = getMonthKey(a.schedule.year, a.schedule.month);
-      const bKey = getMonthKey(b.schedule.year, b.schedule.month);
-      return aKey.localeCompare(bKey);
-    });
+    return Object.values(this.loadAllVersions())
+      .map(versions => versions.find(version => version.isActive))
+      .filter((version): version is ScheduleVersion => version !== undefined)
+      .sort((a, b) =>
+        a.schedule.year - b.schedule.year || a.schedule.month - b.schedule.month);
   }
 
-  static getMonthsWithVersions(): { year: number; month: number; versionsCount: number; hasActive: boolean }[] {
-    const allVersions = this.loadAllScheduleVersions();
-    const months: { year: number; month: number; versionsCount: number; hasActive: boolean }[] = [];
-
-    for (const [monthKey, versions] of Object.entries(allVersions)) {
-      const [year, month] = monthKey.split('-').map(Number);
-      months.push({
-        year,
-        month,
-        versionsCount: versions.length,
-        hasActive: versions.some(v => v.isActive),
-      });
-    }
-
-    return months.sort((a, b) => {
-      if (a.year !== b.year) return a.year - b.year;
-      return a.month - b.month;
-    });
+  /** Numero di versioni per ciascun mese dell'anno indicato (indice 0 = gennaio). */
+  static countVersionsByMonth(year: number): number[] {
+    const all = this.loadAllVersions();
+    return Array.from({ length: 12 }, (_, index) => all[monthKey(year, index + 1)]?.length ?? 0);
   }
 
-  static exportToCSV(schedule: MonthlySchedule, rooms: OperativeRoom[], doctors?: Doctor[]): string {
-    const weekdayNames = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
-    const daysInMonth = new Date(schedule.year, schedule.month, 0).getDate();
-    
-    // Escape any values with commas or quotes for proper CSV format
-    const escapeCSV = (value: string): string => {
-      if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-        return `"${value.replace(/"/g, '""')}"`;
-      }
-      return value;
-    };
-
-    // ========== SECTION 1: BY ROOM ==========
-    
-    // Build column definitions: each column is a room + time slot combination
-    interface ColumnDef {
-      roomId: string;
-      roomName: string;
-      timeSlot: string;
-      label: string;
-    }
-    
-    const columns: ColumnDef[] = [];
-    
-    // First add night shifts
-    for (const room of rooms) {
-      const hasNight = room.slots.some(s => s.timeSlot === '20:00-08:00');
-      if (hasNight) {
-        columns.push({
-          roomId: room.id,
-          roomName: room.name,
-          timeSlot: '20:00-08:00',
-          label: `${room.name} N`,
-        });
-      }
-    }
-    
-    // Then add morning and afternoon for each room
-    for (const room of rooms) {
-      const hasMorning = room.slots.some(s => s.timeSlot === '08:00-14:00');
-      const hasAfternoon = room.slots.some(s => s.timeSlot === '14:00-20:00');
-      
-      if (hasMorning) {
-        columns.push({
-          roomId: room.id,
-          roomName: room.name,
-          timeSlot: '08:00-14:00',
-          label: `${room.name} M`,
-        });
-      }
-      if (hasAfternoon) {
-        columns.push({
-          roomId: room.id,
-          roomName: room.name,
-          timeSlot: '14:00-20:00',
-          label: `${room.name} P`,
-        });
-      }
-    }
-    
-    // Build headers for room view
-    const roomHeaders = ['Giorno', 'Giorno Sett.', ...columns.map(c => c.label)];
-    const roomRows: string[][] = [];
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(schedule.year, schedule.month - 1, day);
-      const dateStr = `${schedule.year}-${String(schedule.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const weekdayName = weekdayNames[date.getDay()];
-
-      const columnValues = columns.map(col => {
-        const assignments = schedule.assignments.filter(
-          a => a.date === dateStr && a.roomId === col.roomId && a.timeSlot === col.timeSlot
-        );
-        return assignments.map(a => a.doctorName.replace(/,/g, ';')).join(' / ');
-      });
-
-      roomRows.push([String(day), weekdayName, ...columnValues]);
-    }
-
-    const roomSection = [
-      '=== TURNI PER SALA ===',
-      roomHeaders.map(escapeCSV).join(','), 
-      ...roomRows.map(row => row.map(escapeCSV).join(','))
-    ];
-
-    // ========== SECTION 2: BY DOCTOR ==========
-    
-    // Get unique doctors from assignments if not provided
-    const doctorList = doctors || (() => {
-      const uniqueDoctors = new Map<string, { id: string; name: string }>();
-      schedule.assignments.forEach(a => {
-        if (!uniqueDoctors.has(a.doctorId)) {
-          uniqueDoctors.set(a.doctorId, { id: a.doctorId, name: a.doctorName });
-        }
-      });
-      return Array.from(uniqueDoctors.values()).sort((a, b) => a.name.localeCompare(b.name));
-    })();
-
-    // Build headers for doctor view
-    const doctorHeaders = ['Giorno', 'Giorno Sett.', ...doctorList.map(d => d.name)];
-    const doctorRows: string[][] = [];
-
-    // Helper to format assignment for doctor view
-    const formatAssignment = (roomId: string, timeSlot: string): string => {
-      const room = rooms.find(r => r.id === roomId);
-      const roomAbbr = room ? room.name : roomId;
-      const slotAbbr = TIME_SLOT_TIME_LABELS[timeSlot as keyof typeof TIME_SLOT_TIME_LABELS] || timeSlot;
-      return `${roomAbbr} ${slotAbbr}`;
-    };
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(schedule.year, schedule.month - 1, day);
-      const dateStr = `${schedule.year}-${String(schedule.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const weekdayName = weekdayNames[date.getDay()];
-
-      const doctorValues = doctorList.map(doctor => {
-        const doctorAssignments = schedule.assignments.filter(
-          a => a.date === dateStr && a.doctorId === doctor.id
-        );
-        // Sort by time slot order
-        doctorAssignments.sort((a, b) => {
-          const order: Record<string, number> = { '08:00-14:00': 0, '14:00-20:00': 1, '20:00-08:00': 2 };
-          return (order[a.timeSlot] || 0) - (order[b.timeSlot] || 0);
-        });
-        return doctorAssignments.map(a => formatAssignment(a.roomId, a.timeSlot)).join(' / ');
-      });
-
-      doctorRows.push([String(day), weekdayName, ...doctorValues]);
-    }
-
-    const doctorSection = [
-      '',
-      '',
-      '=== TURNI PER DOTTORE ===',
-      doctorHeaders.map(escapeCSV).join(','), 
-      ...doctorRows.map(row => row.map(escapeCSV).join(','))
-    ];
-
-    // ========== SECTION 3: STATISTICS ==========
-    
-    const TIME_SLOT_HOURS: Record<string, number> = {
-      '08:00-14:00': 6,
-      '14:00-20:00': 6,
-      '20:00-08:00': 12,
-    };
-
-    // Build set of critical slots
-    const criticalSlots = new Set<string>();
-    for (const room of rooms) {
-      for (const slot of room.slots) {
-        if (slot.isCritical) {
-          criticalSlots.add(`${room.id}-${slot.timeSlot}`);
-        }
-      }
-    }
-
-    // Calculate stats for each doctor
-    interface DoctorStat {
-      name: string;
-      totalShifts: number;
-      totalHours: number;
-      distinctDays: number;
-      weekendShifts: number;
-      criticalShifts: number;
-      morningShifts: number;
-      afternoonShifts: number;
-      nightShifts: number;
-      shiftsByRoom: Record<string, number>;
-    }
-
-    const doctorStats: DoctorStat[] = doctorList.map(doctor => {
-      const doctorAssignments = schedule.assignments.filter(a => a.doctorId === doctor.id);
-      const daysWorked = new Set<string>();
-      let weekendShifts = 0;
-      let criticalShifts = 0;
-      let morningShifts = 0;
-      let afternoonShifts = 0;
-      let nightShifts = 0;
-      let totalHours = 0;
-      const shiftsByRoom: Record<string, number> = {};
-
-      // Initialize room counts
-      for (const room of rooms) {
-        shiftsByRoom[room.id] = 0;
-      }
-
-      for (const assignment of doctorAssignments) {
-        daysWorked.add(assignment.date);
-        totalHours += TIME_SLOT_HOURS[assignment.timeSlot] || 0;
-
-        // Weekend check
-        const date = parseDateLocal(assignment.date);
-        if (date.getDay() === 0 || date.getDay() === 6) {
-          weekendShifts++;
-        }
-
-        // Critical check
-        if (criticalSlots.has(`${assignment.roomId}-${assignment.timeSlot}`)) {
-          criticalShifts++;
-        }
-
-        // Time slot counts
-        if (assignment.timeSlot === '08:00-14:00') morningShifts++;
-        else if (assignment.timeSlot === '14:00-20:00') afternoonShifts++;
-        else if (assignment.timeSlot === '20:00-08:00') nightShifts++;
-
-        // Room counts
-        if (shiftsByRoom[assignment.roomId] !== undefined) {
-          shiftsByRoom[assignment.roomId]++;
-        }
-      }
-
-      return {
-        name: doctor.name,
-        totalShifts: doctorAssignments.length,
-        totalHours,
-        distinctDays: daysWorked.size,
-        weekendShifts,
-        criticalShifts,
-        morningShifts,
-        afternoonShifts,
-        nightShifts,
-        shiftsByRoom,
-      };
-    });
-
-    // Build stats headers
-    const statsHeaders = [
-      'Dottore',
-      'Turni',
-      'Ore',
-      'Giorni',
-      'Weekend',
-      'Critici',
-      'M',
-      'P',
-      'N',
-      ...rooms.map(r => r.name),
-    ];
-
-    const statsRows = doctorStats.map(stat => [
-      stat.name,
-      String(stat.totalShifts),
-      String(stat.totalHours),
-      String(stat.distinctDays),
-      String(stat.weekendShifts),
-      String(stat.criticalShifts),
-      String(stat.morningShifts),
-      String(stat.afternoonShifts),
-      String(stat.nightShifts),
-      ...rooms.map(r => String(stat.shiftsByRoom[r.id] || 0)),
-    ]);
-
-    // Calculate totals row
-    const totals = {
-      shifts: doctorStats.reduce((sum, s) => sum + s.totalShifts, 0),
-      hours: doctorStats.reduce((sum, s) => sum + s.totalHours, 0),
-      days: doctorStats.reduce((sum, s) => sum + s.distinctDays, 0),
-      weekend: doctorStats.reduce((sum, s) => sum + s.weekendShifts, 0),
-      critical: doctorStats.reduce((sum, s) => sum + s.criticalShifts, 0),
-      morning: doctorStats.reduce((sum, s) => sum + s.morningShifts, 0),
-      afternoon: doctorStats.reduce((sum, s) => sum + s.afternoonShifts, 0),
-      night: doctorStats.reduce((sum, s) => sum + s.nightShifts, 0),
-      byRoom: rooms.map(r => doctorStats.reduce((sum, s) => sum + (s.shiftsByRoom[r.id] || 0), 0)),
-    };
-
-    const totalsRow = [
-      'TOTALE',
-      String(totals.shifts),
-      String(totals.hours),
-      String(totals.days),
-      String(totals.weekend),
-      String(totals.critical),
-      String(totals.morning),
-      String(totals.afternoon),
-      String(totals.night),
-      ...totals.byRoom.map(String),
-    ];
-
-    // Calculate averages row
-    const numDoctors = doctorStats.length || 1;
-    const averages = {
-      shifts: totals.shifts / numDoctors,
-      hours: totals.hours / numDoctors,
-      days: totals.days / numDoctors,
-      weekend: totals.weekend / numDoctors,
-      critical: totals.critical / numDoctors,
-      morning: totals.morning / numDoctors,
-      afternoon: totals.afternoon / numDoctors,
-      night: totals.night / numDoctors,
-      byRoom: totals.byRoom.map(v => v / numDoctors),
-    };
-
-    const averagesRow = [
-      'MEDIA',
-      averages.shifts.toFixed(1),
-      averages.hours.toFixed(1),
-      averages.days.toFixed(1),
-      averages.weekend.toFixed(1),
-      averages.critical.toFixed(1),
-      averages.morning.toFixed(1),
-      averages.afternoon.toFixed(1),
-      averages.night.toFixed(1),
-      ...averages.byRoom.map(v => v.toFixed(1)),
-    ];
-
-    // Calculate standard deviation (varianza) row
-    const calcStdDev = (values: number[], mean: number): number => {
-      if (values.length === 0) return 0;
-      const squareDiffs = values.map(v => Math.pow(v - mean, 2));
-      return Math.sqrt(squareDiffs.reduce((a, b) => a + b, 0) / values.length);
-    };
-
-    const stdDevRow = [
-      'DEV.STD',
-      calcStdDev(doctorStats.map(s => s.totalShifts), averages.shifts).toFixed(2),
-      calcStdDev(doctorStats.map(s => s.totalHours), averages.hours).toFixed(2),
-      calcStdDev(doctorStats.map(s => s.distinctDays), averages.days).toFixed(2),
-      calcStdDev(doctorStats.map(s => s.weekendShifts), averages.weekend).toFixed(2),
-      calcStdDev(doctorStats.map(s => s.criticalShifts), averages.critical).toFixed(2),
-      calcStdDev(doctorStats.map(s => s.morningShifts), averages.morning).toFixed(2),
-      calcStdDev(doctorStats.map(s => s.afternoonShifts), averages.afternoon).toFixed(2),
-      calcStdDev(doctorStats.map(s => s.nightShifts), averages.night).toFixed(2),
-      ...rooms.map((r, i) => 
-        calcStdDev(doctorStats.map(s => s.shiftsByRoom[r.id] || 0), averages.byRoom[i]).toFixed(2)
-      ),
-    ];
-
-    const statsSection = [
-      '',
-      '',
-      '=== STATISTICHE MESE ===',
-      statsHeaders.map(escapeCSV).join(','),
-      ...statsRows.map(row => row.map(escapeCSV).join(',')),
-      '',
-      totalsRow.map(escapeCSV).join(','),
-      averagesRow.map(escapeCSV).join(','),
-      stdDevRow.map(escapeCSV).join(','),
-    ];
-
-    return [...roomSection, ...doctorSection, ...statsSection].join('\n');
+  static hasAnyVersion(): boolean {
+    return Object.values(this.loadAllVersions()).some(versions => versions.length > 0);
   }
 
-  static downloadCSV(schedule: MonthlySchedule, rooms: OperativeRoom[], doctors?: Doctor[]): void {
-    const csv = this.exportToCSV(schedule, rooms, doctors);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
+  // ----- Export -----
+
+  static exportToCSV(
+    schedule: MonthlySchedule,
+    rooms: OperativeRoom[],
+    doctors: Doctor[],
+    shiftTypes: ShiftType[],
+  ): string {
+    const index = new ShiftTypeIndex(shiftTypes);
+    const slotIndex = new RoomSlotIndex(rooms);
+    const days = buildMonthDays(schedule.year, schedule.month);
+    const lines: string[] = [];
+
+    const byDate = new Map<string, Assignment[]>();
+    for (const assignment of schedule.assignments) {
+      const bucket = byDate.get(assignment.date);
+      if (bucket) bucket.push(assignment);
+      else byDate.set(assignment.date, [assignment]);
+    }
+
+    // --- Turni per sala ---
+    // Una colonna per ogni combinazione sala + fascia effettivamente usata.
+    const columns = rooms.flatMap(room => {
+      const used = new Set(room.slots.map(slot => slot.shiftTypeId));
+      return index.all
+        .filter(shiftType => used.has(shiftType.id))
+        .map(shiftType => ({ room, shiftType }));
+    });
+
+    lines.push(`Turni ${formatMonthLabel(schedule.year, schedule.month)}`);
+    lines.push('');
+    lines.push('Turni per sala');
+    lines.push(csvRow([
+      'Giorno',
+      'Giorno sett.',
+      ...columns.map(({ room, shiftType }) => `${room.name} ${shiftType.code}`),
+    ]));
+
+    for (const day of days) {
+      const dayAssignments = byDate.get(day.date) ?? [];
+      lines.push(csvRow([
+        String(day.day),
+        WEEKDAY_SHORT_BY_INDEX[day.weekdayIndex],
+        ...columns.map(({ room, shiftType }) =>
+          dayAssignments
+            .filter(a => a.roomId === room.id && a.shiftTypeId === shiftType.id)
+            .map(a => a.doctorName)
+            .join(' / ')),
+      ]));
+    }
+
+    // --- Turni per dottore ---
+    lines.push('', 'Turni per dottore');
+    lines.push(csvRow(['Giorno', 'Giorno sett.', ...doctors.map(doctor => doctor.name)]));
+
+    for (const day of days) {
+      const dayAssignments = byDate.get(day.date) ?? [];
+      lines.push(csvRow([
+        String(day.day),
+        WEEKDAY_SHORT_BY_INDEX[day.weekdayIndex],
+        ...doctors.map(doctor =>
+          dayAssignments
+            .filter(a => a.doctorId === doctor.id)
+            .sort((a, b) => index.compare(a.shiftTypeId, b.shiftTypeId))
+            .map(a => `${a.roomName} ${index.get(a.shiftTypeId).code}`)
+            .join(' / ')),
+      ]));
+    }
+
+    // --- Statistiche ---
+    const stats = computeStats([schedule], { doctors, rooms, shiftTypes: index, slotIndex });
+    const statColumns = buildStatColumns({ rooms, shiftTypes: index.all });
+    const summary = summarizeColumns(stats, statColumns);
+
+    lines.push('', 'Statistiche del mese');
+    lines.push(csvRow(['Dottore', ...statColumns.map(column => column.label)]));
+
+    for (const stat of stats) {
+      lines.push(csvRow([
+        stat.doctorName,
+        ...statColumns.map(column => String(column.value(stat))),
+      ]));
+    }
+
+    lines.push('');
+    lines.push(csvRow(['TOTALE', ...statColumns.map(c => String(summary[c.key].total))]));
+    lines.push(csvRow(['MEDIA', ...statColumns.map(c => summary[c.key].average.toFixed(1))]));
+    lines.push(csvRow(['DEV.STD', ...statColumns.map(c => summary[c.key].stdDev.toFixed(2))]));
+
+    return lines.join('\r\n');
+  }
+
+  static downloadCSV(
+    schedule: MonthlySchedule,
+    rooms: OperativeRoom[],
+    doctors: Doctor[],
+    shiftTypes: ShiftType[],
+  ): void {
+    const csv = this.exportToCSV(schedule, rooms, doctors, shiftTypes);
+    // Il BOM serve a Excel per riconoscere UTF-8: senza, le lettere accentate
+    // dei giorni della settimana arrivano illeggibili.
+    const blob = new Blob([BYTE_ORDER_MARK + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
     link.href = url;
-    link.download = `turni_${schedule.year}_${schedule.month}.csv`;
+    link.download = `turni_${schedule.year}_${String(schedule.month).padStart(2, '0')}.csv`;
+    // Firefox ignora i click su elementi non presenti nel documento.
+    document.body.append(link);
     link.click();
+    link.remove();
     URL.revokeObjectURL(url);
   }
 
+  /** Azzera i dati del solo servizio attivo. */
   static clearAll(): void {
-    localStorage.removeItem(STORAGE_KEYS.ROOMS);
-    localStorage.removeItem(STORAGE_KEYS.DOCTORS);
-    localStorage.removeItem(STORAGE_KEYS.SCHEDULE);
-    localStorage.removeItem(STORAGE_KEYS.SCHEDULE_VERSIONS);
-    localStorage.removeItem(STORAGE_KEYS.GENERATION_CONFIG);
+    for (const scope of DATA_SCOPES) {
+      localStorage.removeItem(keyOf(scope));
+    }
   }
+}
+
+function csvRow(values: string[]): string {
+  return values.map(escapeCSV).join(',');
+}
+
+function escapeCSV(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }

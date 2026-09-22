@@ -1,0 +1,134 @@
+.mini-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 420px;
+}
+
+.mini-calendar-head,
+.mini-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.1875rem;
+}
+
+.mini-head-cell {
+  padding: 0.125rem 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.mini-head-cell.selectable:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.mini-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.125rem;
+  min-height: 34px;
+  padding: 0.1875rem 0.125rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+
+.mini-day:hover:not(:disabled):not(.blank) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.mini-day.blank {
+  border-color: transparent;
+  background: transparent;
+  pointer-events: none;
+}
+
+.mini-day.weekend {
+  background: rgba(245, 165, 36, 0.07);
+  color: #fcd34d;
+}
+
+.mini-day.selected {
+  color: #fff;
+  font-weight: 700;
+}
+
+.mini-day.partial {
+  /* Il tratteggio distingue a colpo d'occhio una giornata solo parziale. */
+  border-style: dashed;
+}
+
+.mini-day.highlighted {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.mini-day:disabled {
+  opacity: 0.45;
+}
+
+.mini-day-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.mini-day-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 0.125rem;
+  border-radius: 3px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.5rem;
+  font-weight: 700;
+}
+
+/* ----- Sigle delle fasce dentro il giorno ----- */
+
+.mini-day-slots {
+  display: flex;
+  gap: 1px;
+}
+
+.mini-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.3);
+  font-size: 0.5rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+}
+
+.mini-slot.on {
+  background: rgba(255, 255, 255, 0.92);
+  color: #0b1220;
+}
+
+.mini-slot:hover {
+  outline: 1px solid rgba(255, 255, 255, 0.8);
+}
