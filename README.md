@@ -315,6 +315,15 @@ repository, che il workflow di deploy legge in fase di compilazione:
 gh secret set VITE_APP_PASSWORD_SHA256 --body <impronta>
 ```
 
+> **Il prefisso `VITE_` pubblica.** Vite incorpora nel codice compilato ogni
+> variabile che inizia per `VITE_`, e quel codice è scaricabile da chiunque apra
+> il sito. Va bene per un'impronta, che è pensata per stare lì; non va bene per
+> una chiave di un servizio esterno. Se un domani servisse una chiave vera,
+> nessun prefisso `VITE_` la renderebbe segreta: servirebbe un pezzo lato
+> server che la tenga e faccia lui le chiamate. Oggi il problema non esiste,
+> perché l'applicazione non contatta nessun servizio: le sole dipendenze di
+> esecuzione sono `react` e `react-dom`, e nel codice non c'è una `fetch`.
+
 Se la variabile non è impostata il blocco non si attiva e l'applicazione si apre
 senza chiedere nulla: è il comportamento voluto in sviluppo e nei test. Per
 questo `tools/smoke.mjs` semina lo sblocco da sé leggendo l'impronta da
