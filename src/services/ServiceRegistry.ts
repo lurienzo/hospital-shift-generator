@@ -20,6 +20,7 @@ export const DATA_SCOPES = [
   'shiftTypes',
   'schemes',
   'rotationRule',
+  'hoursTarget',
   'schedule',
   'versions',
   'generationConfig',
@@ -37,6 +38,7 @@ const LEGACY_KEYS: Record<DataScope, string> = {
   shiftTypes: 'hospital_shift_shift_types',
   schemes: 'hospital_shift_schemes',
   rotationRule: 'hospital_shift_rotation_rule',
+  hoursTarget: 'hospital_shift_hours_target',
   schedule: 'hospital_shift_schedule',
   versions: 'hospital_shift_schedule_versions',
   generationConfig: 'hospital_shift_generation_config',
@@ -146,7 +148,9 @@ export class ServiceRegistry {
    */
   static duplicateConfiguration(sourceId: string, name: string): Service {
     const service = this.create(name);
-    const copied: DataScope[] = ['rooms', 'doctors', 'shiftTypes', 'schemes', 'rotationRule'];
+    const copied: DataScope[] = [
+      'rooms', 'doctors', 'shiftTypes', 'schemes', 'rotationRule', 'hoursTarget',
+    ];
 
     for (const scope of copied) {
       const value = localStorage.getItem(this.scopedKey(scope, sourceId));

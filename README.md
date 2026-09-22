@@ -94,14 +94,58 @@ giornaliero: impegnano un medico per una settimana intera, quindi durante un
 blocco la rotazione resta sospesa e riprende dopo. Per questo non sono
 selezionabili come passo di uno schema.
 
+### Ore per medico
+
+In *Impostazioni* si può indicare quante ore ciascuno dovrebbe svolgere, con
+un minimo e un massimo per settimana o per mese (per esempio 36–42 ore
+settimanali).
+
+Le due soglie non pesano allo stesso modo:
+
+- il **massimo è un tetto**: il generatore non lo supera, anche a costo di
+  lasciare un turno scoperto;
+- il **minimo guida la distribuzione**: a parità di altri criteri viene servito
+  prima chi è più lontano dalla soglia, ma nessuno viene costretto a lavorare
+  più di quanto il servizio richieda.
+
+Un medico può avere ore proprie, diverse da quelle del servizio, impostate
+nella sua scheda.
+
+Le settimane a cavallo di due mesi sono il punto delicato: guardate dal solo
+mese in corso sembrerebbero sempre sotto il minimo. Per questo vengono
+giudicate sul minimo solo quando il mese precedente è già salvato, mentre il
+superamento del massimo viene segnalato comunque, perché le ore dei giorni non
+visibili possono soltanto aggiungersi.
+
+### Preferenze dei medici
+
+Nella scheda di ciascun medico, oltre alle sale in cui non lavora, si
+impostano:
+
+- **Giorni e fasce.** Una griglia con i sette giorni e le fasce configurate,
+  dove ogni casella ha tre stati: libera, *preferisce evitare* (avviso) e *non
+  lavora mai* (errore). La riga "tutto il giorno" agisce sulla giornata intera
+  e le caselle che ne derivano sono tratteggiate. Così si esprime sia "il
+  giovedì non lavora" sia "preferisce non fare il giovedì pomeriggio".
+- **Durata dei turni preferita.** Turni lunghi o turni brevi. La soglia fra i
+  due non è un numero fisso: è il punto medio fra la fascia più breve e la più
+  lunga del servizio, e viene mostrata nella scheda. Se tutte le fasce hanno la
+  stessa durata la distinzione non si applica.
+- **Ore proprie**, quando diverse da quelle del servizio.
+
+Le preferenze orientano la scelta del generatore ma non lasciano turni
+scoperti: quando nessuno è disponibile, il turno viene assegnato comunque e
+compare fra gli avvisi. I divieti invece non vengono mai violati.
+
 ## Come si usa
 
 1. **Sale operative** — aggiungi le sale o i reparti da coprire. Per ciascuno
    definisci la griglia dei turni della settimana: quali fasce servono in
    quali giorni. I pulsanti a fine riga riempiono una fascia su tutti i
    giorni, sui giorni lavorativi o sul weekend.
-2. **Dottori** — aggiungi le persone. Per ognuna si possono indicare le sale e
-   i giorni della settimana in cui non lavora mai.
+2. **Dottori** — aggiungi le persone. Per ognuna si indicano le sale in cui non
+   lavora, i giorni e le fasce da evitare o vietate, la durata di turno
+   preferita e le eventuali ore proprie.
 3. **Genera** — scegli mese e anno, segna i festivi, indica assenze e
    disponibilità del mese, eventualmente fissa a mano qualche turno, e genera.
 4. **Calendario** — la bozza appare qui. Si modifica cliccando i turni,
@@ -146,7 +190,7 @@ Un turno che li viola è segnato come errore:
 |---|---|
 | Non disponibile | assenza dichiarata per quel giorno o quella fascia |
 | Sala esclusa | il medico non lavora in quella sala |
-| Giorno escluso | il medico non lavora in quel giorno della settimana |
+| Giorno escluso | il medico non lavora in quel giorno, o in quella sua fascia |
 | Doppio turno | stesso medico due volte sulla stessa fascia |
 | Orari sovrapposti | due turni dello stesso medico che si accavallano |
 | Smontante | il giorno dopo un turno che impone riposo |
@@ -162,6 +206,13 @@ scoperti per rispettarli:
 - **Fuori rotazione** — un turno che non corrisponde al passo previsto dalla
   rotazione del servizio, o assegnato in una giornata che lo schema vorrebbe
   libera.
+- **Preferenza** — un turno in un giorno o una fascia che il medico preferisce
+  evitare.
+- **Oltre le ore** — un periodo in cui il medico supera il massimo di ore.
+
+Gli scostamenti dalle ore richieste e dalla durata di turno preferita hanno un
+pannello dedicato nel calendario, *Ore e preferenze*, che indica per ciascuno
+il periodo e di quanto si discosta.
 
 ### Flag dei turni
 
@@ -199,8 +250,12 @@ Il generatore procede per priorità decrescente di rigidità:
 2. i **blocchi** delle fasce a rotazione, che impegnano un medico per giorni;
 3. i **gruppi di giorni** delle sale;
 4. i **turni consecutivi** delle sale;
-5. tutto il resto, dove la rotazione del servizio è il primo criterio di
-   scelta e l'equità del carico il secondo.
+5. tutto il resto, dove i criteri di scelta sono, in ordine: la rotazione del
+   servizio, le preferenze del medico sul giorno, la distanza dal minimo di
+   ore, la durata di turno preferita e infine l'equità del carico.
+
+Il massimo di ore e i divieti per giorno agiscono prima di tutto questo, come
+condizioni di ammissibilità: un medico che li violerebbe non viene considerato.
 
 ## Sviluppo
 
@@ -239,6 +294,8 @@ src/
     shiftTypes.ts       fasce orarie, sovrapposizioni, blocchi di rotazione
     schemes.ts          schemi turni
     rotation.ts         posizione dei medici nel giro di rotazione
+    preferences.ts      divieti, preferenze e durata dei turni
+    hours.ts            ore per periodo, con i periodi a cavallo del mese
     validation.ts       vincoli, violazioni, turni da coprire
     stats.ts            statistiche e colonne delle tabelle
   services/
@@ -259,10 +316,12 @@ segnala.
 
 Le chiavi del `localStorage` hanno la forma `hsg:<idServizio>:<ambito>`, dove
 l'ambito è `rooms`, `doctors`, `shiftTypes`, `schemes`, `rotationRule`,
-`schedule`, `versions` o `generationConfig`. L'elenco dei servizi sta in `hsg_services` e quello
+`hoursTarget`, `schedule`, `versions` o `generationConfig`. L'elenco dei servizi sta in `hsg_services` e quello
 attivo in `hsg_active_service`.
 
 I dati salvati dalle versioni precedenti, che usavano chiavi globali senza
 servizio, vengono ricondotti automaticamente a un primo servizio al primo
-avvio. Anche il vecchio campo `timeSlot` delle assegnazioni viene convertito in
-`shiftTypeId` alla lettura, senza migrazioni distruttive.
+avvio. Alla lettura vengono convertiti anche il vecchio campo `timeSlot` delle
+assegnazioni, che diventa `shiftTypeId`, e l'elenco `excludedWeekdays` dei
+medici, che diventa un divieto di giornata intera fra le nuove regole. Nessuna
+di queste conversioni è distruttiva.

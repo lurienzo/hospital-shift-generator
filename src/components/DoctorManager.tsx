@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Doctor, DOCTOR_COLORS, Weekday, WEEKDAYS, WEEKDAY_LABELS } from '../models/types';
+import { Doctor, DOCTOR_COLORS } from '../models/types';
 import { useConfig } from '../state/configContext';
+import { DoctorPreferences } from './DoctorPreferences';
 import { generateId } from '../utils/id';
 import './DoctorManager.css';
 
 export function DoctorManager() {
-  const { doctors, setDoctors, rooms, rotationRule, setRotationRule } = useConfig();
+  const { doctors, setDoctors, rotationRule, setRotationRule } = useConfig();
 
   const [newDoctorName, setNewDoctorName] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -31,13 +32,14 @@ export function DoctorManager() {
       name,
       color: nextColor(),
       excludedRooms: [],
-      excludedWeekdays: [],
+      weekdayRules: [],
+      shiftLengthPreference: 'none',
     }]);
     setNewDoctorName('');
   };
 
-  const updateDoctor = (doctorId: string, changes: Partial<Doctor>) => {
-    setDoctors(doctors.map(doctor => (doctor.id === doctorId ? { ...doctor, ...changes } : doctor)));
+  const replaceDoctor = (next: Doctor) => {
+    setDoctors(doctors.map(other => (other.id === next.id ? next : other)));
   };
 
   const removeDoctor = (doctor: Doctor) => {
@@ -61,22 +63,6 @@ export function DoctorManager() {
     if (expandedId === doctor.id) setExpandedId(null);
   };
 
-  const toggleRoom = (doctor: Doctor, roomId: string) => {
-    updateDoctor(doctor.id, {
-      excludedRooms: doctor.excludedRooms.includes(roomId)
-        ? doctor.excludedRooms.filter(id => id !== roomId)
-        : [...doctor.excludedRooms, roomId],
-    });
-  };
-
-  const toggleWeekday = (doctor: Doctor, weekday: Weekday) => {
-    updateDoctor(doctor.id, {
-      excludedWeekdays: doctor.excludedWeekdays.includes(weekday)
-        ? doctor.excludedWeekdays.filter(day => day !== weekday)
-        : [...doctor.excludedWeekdays, weekday],
-    });
-  };
-
   return (
     <div className="doctor-manager stack">
       <form className="add-row" onSubmit={event => { event.preventDefault(); addDoctor(); }}>
@@ -95,15 +81,14 @@ export function DoctorManager() {
         <div className="empty-state">
           <h2>Nessun dottore configurato</h2>
           <p>
-            Aggiungi le persone da inserire nei turni. Per ciascuna potrai indicare le sale e i
-            giorni della settimana in cui non lavora mai.
+            Aggiungi le persone da inserire nei turni. Per ciascuna potrai indicare i giorni in
+            cui non lavora, quelli che preferisce evitare e la durata di turno che preferisce.
           </p>
         </div>
       ) : (
         <div className="doctor-grid">
           {doctors.map(doctor => {
             const expanded = expandedId === doctor.id;
-            const exclusions = doctor.excludedRooms.length + doctor.excludedWeekdays.length;
 
             return (
               <article
@@ -123,7 +108,7 @@ export function DoctorManager() {
                       autoFocus
                       onBlur={event => {
                         const name = event.target.value.trim();
-                        if (name) updateDoctor(doctor.id, { name });
+                        if (name) replaceDoctor({ ...doctor, name });
                         setRenamingId(null);
                       }}
                       onKeyDown={event => {
@@ -146,7 +131,7 @@ export function DoctorManager() {
                     className="color-input"
                     type="color"
                     value={doctor.color}
-                    onChange={event => updateDoctor(doctor.id, { color: event.target.value })}
+                    onChange={event => replaceDoctor({ ...doctor, color: event.target.value })}
                     title="Colore del dottore"
                     aria-label={`Colore di ${doctor.name}`}
                   />
@@ -164,56 +149,12 @@ export function DoctorManager() {
                   onClick={() => setExpandedId(expanded ? null : doctor.id)}
                   aria-expanded={expanded}
                 >
-                  {exclusions === 0
-                    ? 'Nessuna esclusione'
-                    : `${exclusions} esclusion${exclusions === 1 ? 'e' : 'i'}`}
+                  {describeDoctor(doctor)}
                   <span className="doctor-toggle-icon">{expanded ? '▴' : '▾'}</span>
                 </button>
 
                 {expanded && (
-                  <div className="doctor-body">
-                    <div className="field">
-                      <span className="label">Sale in cui non lavora</span>
-                      {rooms.length === 0 ? (
-                        <p className="hint">Nessuna sala configurata.</p>
-                      ) : (
-                        <div className="row-wrap">
-                          {rooms.map(room => (
-                            <button
-                              key={room.id}
-                              type="button"
-                              className={`exclusion-pill ${doctor.excludedRooms.includes(room.id) ? 'on' : ''}`}
-                              onClick={() => toggleRoom(doctor, room.id)}
-                            >
-                              <span className="dot" style={{ background: room.color }} />
-                              {room.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="field">
-                      <span className="label">Giorni in cui non lavora</span>
-                      <div className="row-wrap">
-                        {WEEKDAYS.map(weekday => (
-                          <button
-                            key={weekday}
-                            type="button"
-                            className={`exclusion-pill ${doctor.excludedWeekdays.includes(weekday) ? 'on' : ''}`}
-                            onClick={() => toggleWeekday(doctor, weekday)}
-                          >
-                            {WEEKDAY_LABELS[weekday]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <p className="hint">
-                      Queste esclusioni valgono sempre. Ferie e disponibilità di un singolo mese
-                      si impostano nella sezione Genera.
-                    </p>
-                  </div>
+                  <DoctorPreferences doctor={doctor} onChange={replaceDoctor} />
                 )}
               </article>
             );
@@ -222,4 +163,27 @@ export function DoctorManager() {
       )}
     </div>
   );
+}
+
+/** Riepilogo compatto di vincoli e preferenze, mostrato a scheda chiusa. */
+function describeDoctor(doctor: Doctor): string {
+  const parts: string[] = [];
+
+  if (doctor.excludedRooms.length > 0) {
+    const count = doctor.excludedRooms.length;
+    parts.push(count === 1 ? '1 sala esclusa' : `${count} sale escluse`);
+  }
+
+  const never = doctor.weekdayRules.filter(rule => rule.level === 'never').length;
+  const avoid = doctor.weekdayRules.filter(rule => rule.level === 'avoid').length;
+  if (never > 0) parts.push(`${never} divieto${never === 1 ? '' : 'i'}`);
+  if (avoid > 0) parts.push(`${avoid} preferenz${avoid === 1 ? 'a' : 'e'}`);
+
+  if (doctor.shiftLengthPreference === 'long') parts.push('turni lunghi');
+  if (doctor.shiftLengthPreference === 'short') parts.push('turni brevi');
+  if (doctor.hoursOverride) {
+    parts.push(`${doctor.hoursOverride.min}–${doctor.hoursOverride.max}h`);
+  }
+
+  return parts.length === 0 ? 'Nessun vincolo' : parts.join(' · ');
 }

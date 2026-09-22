@@ -21,6 +21,7 @@ import { useConfig } from '../state/configContext';
 import { SchemeEditor } from './SchemeEditor';
 import { ServiceManager } from './ServiceManager';
 import { RotationRuleEditor } from './RotationRuleEditor';
+import { HoursTargetEditor } from './HoursTargetEditor';
 import { generateId } from '../utils/id';
 import './Settings.css';
 
@@ -356,6 +357,8 @@ export function Settings({ hasUnsavedChanges }: SettingsProps) {
       </section>
 
       <RotationRuleEditor />
+
+      <HoursTargetEditor />
 
       {editingScheme && (
         <SchemeEditor

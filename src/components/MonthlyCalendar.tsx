@@ -12,6 +12,8 @@ import {
   primaryViolation,
 } from '../domain/validation';
 import { RotationTracker } from '../domain/rotation';
+import { EMPTY_HOURS_REPORT, buildHoursReport } from '../domain/hours';
+import { measureLengthPreference } from '../domain/preferences';
 import { useConfig } from '../state/configContext';
 import { ScheduleVersionManager } from './ScheduleVersionManager';
 import { StatsTable } from './StatsTable';
@@ -21,6 +23,7 @@ import {
   MONTH_NAMES_SHORT,
   WEEKDAY_SHORT_BY_INDEX,
   buildMonthDays,
+  getDaysInMonth,
   formatDayMonth,
   formatMonthLabel,
   mondayFirstIndex,
@@ -65,7 +68,10 @@ export function MonthlyCalendar({
   onDuplicateVersion,
   onVersionsChanged,
 }: MonthlyCalendarProps) {
-  const { rooms, doctors, shiftTypes, shiftTypeIndex, rotationRule, rotationScheme } = useConfig();
+  const {
+    rooms, doctors, shiftTypes, shiftTypeIndex,
+    rotationRule, rotationScheme, hoursTarget, doctorRules, lengthScale,
+  } = useConfig();
 
   const [view, setView] = useState<CalendarView>('rooms');
   const [selectedYear, setSelectedYear] = useState(schedule?.year ?? new Date().getFullYear());
@@ -114,6 +120,46 @@ export function MonthlyCalendar({
     return tracker;
   }, [rotationScheme, rotationRule, shiftTypeIndex, schedule]);
 
+  /**
+   * Il mese precedente serve alle settimane a cavallo: senza, i primi giorni
+   * sembrerebbero sempre sotto il minimo di ore.
+   */
+  const priorAssignments = useMemo(() => {
+    if (!schedule) return [];
+    const previous = schedule.month === 1
+      ? StorageService.getActiveVersion(schedule.year - 1, 12)
+      : StorageService.getActiveVersion(schedule.year, schedule.month - 1);
+    return previous?.schedule.assignments ?? [];
+  }, [schedule]);
+
+  const hours = useMemo(() => {
+    if (!schedule) return EMPTY_HOURS_REPORT;
+
+    const firstDay = `${schedule.year}-${String(schedule.month).padStart(2, '0')}-01`;
+    const earliestPrior = priorAssignments.reduce<string | null>(
+      (earliest, item) => (earliest === null || item.date < earliest ? item.date : earliest),
+      null,
+    );
+
+    return buildHoursReport({
+      year: schedule.year,
+      month: schedule.month,
+      target: hoursTarget,
+      doctors,
+      shiftTypes: shiftTypeIndex,
+      assignments: [...priorAssignments, ...schedule.assignments],
+      known: {
+        from: earliestPrior !== null && earliestPrior < firstDay ? earliestPrior : firstDay,
+        to: `${schedule.year}-${String(schedule.month).padStart(2, '0')}-${getDaysInMonth(schedule.year, schedule.month)}`,
+      },
+    });
+  }, [schedule, hoursTarget, doctors, shiftTypeIndex, priorAssignments]);
+
+  const lengthPreference = useMemo(() => {
+    if (!schedule) return new Map();
+    return measureLengthPreference(schedule.assignments, doctors, shiftTypeIndex, lengthScale);
+  }, [schedule, doctors, shiftTypeIndex, lengthScale]);
+
   const report = useMemo(() => {
     if (!schedule) return null;
     return findViolations(schedule.assignments, {
@@ -123,8 +169,13 @@ export function MonthlyCalendar({
       availability,
       slotIndex,
       rotation,
+      rules: doctorRules,
+      hours,
     });
-  }, [schedule, rooms, doctors, shiftTypeIndex, availability, slotIndex, rotation]);
+  }, [
+    schedule, rooms, doctors, shiftTypeIndex, availability, slotIndex,
+    rotation, doctorRules, hours,
+  ]);
 
   const gaps = useMemo(() => {
     if (!schedule) return [];
@@ -439,6 +490,14 @@ export function MonthlyCalendar({
               <span className="value">{summary.weekend.toFixed(1)}</span>
               <span className="label">Weekend per dottore</span>
             </div>
+            {hoursTarget.enabled && (
+              <div className={`stat-card ${hours.issues.length > 0 ? 'tone-warning' : 'tone-accent'}`}>
+                <span className="value">{hours.issues.length}</span>
+                <span className="label">
+                  Ore fuori intervallo
+                </span>
+              </div>
+            )}
             {gaps.length > 0 && (
               <div className="stat-card tone-danger">
                 <span className="value">{gaps.length}</span>
@@ -730,6 +789,85 @@ export function MonthlyCalendar({
             </div>
           )}
 
+          {/* ---------------- Ore e preferenze ---------------- */}
+          {(hours.issues.length > 0 || lengthPreference.size > 0) && (
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h3>Ore e preferenze</h3>
+                  <p className="hint">
+                    Segnalazioni che non sono errori: indicano scostamenti dalle ore richieste e
+                    dalle preferenze dichiarate dai dottori.
+                  </p>
+                </div>
+              </div>
+
+              {hours.issues.length > 0 && (
+                <div className="field">
+                  <span className="label">
+                    Ore fuori intervallo ({hours.target.min}–{hours.target.max} per{' '}
+                    {hours.target.period === 'week' ? 'settimana' : 'mese'})
+                  </span>
+                  <ul className="issue-list">
+                    {hours.issues.map(entry => {
+                      const doctor = doctors.find(candidate => candidate.id === entry.doctorId);
+                      if (!doctor) return null;
+                      return (
+                        <li
+                          key={`${entry.doctorId}-${entry.period.key}`}
+                          className={`issue-row ${entry.status}`}
+                        >
+                          <span className="issue-who">
+                            <span className="dot" style={{ background: doctor.color }} />
+                            {doctor.name}
+                          </span>
+                          <span className="issue-when">{entry.period.label}</span>
+                          <span className="issue-value">{formatHours(entry.hours)}</span>
+                          <span className="issue-detail">
+                            {entry.status === 'below'
+                              ? `${formatHours(entry.gap)} sotto il minimo`
+                              : `${formatHours(entry.gap)} oltre il massimo`}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {lengthPreference.size > 0 && (
+                <div className="field">
+                  <span className="label">Durata dei turni preferita</span>
+                  <ul className="issue-list">
+                    {[...lengthPreference.entries()].map(([doctorId, entry]) => {
+                      const doctor = doctors.find(candidate => candidate.id === doctorId);
+                      if (!doctor) return null;
+                      return (
+                        <li
+                          key={doctorId}
+                          className={`issue-row ${entry.against > entry.preferred ? 'below' : 'ok'}`}
+                        >
+                          <span className="issue-who">
+                            <span className="dot" style={{ background: doctor.color }} />
+                            {doctor.name}
+                          </span>
+                          <span className="issue-when">
+                            {doctor.shiftLengthPreference === 'long' ? 'turni lunghi' : 'turni brevi'}
+                          </span>
+                          <span className="issue-value">{Math.round(entry.ratio * 100)}%</span>
+                          <span className="issue-detail">
+                            {entry.preferred} come preferisce
+                            {entry.against > 0 && `, ${entry.against} no`}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </section>
+          )}
+
           {/* ---------------- Riepilogo per dottore ---------------- */}
           <section className="panel">
             <div className="panel-header">
@@ -821,6 +959,10 @@ export function MonthlyCalendar({
       )}
     </div>
   );
+}
+
+function formatHours(hours: number): string {
+  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
 }
 
 // ---------------------------------------------------------------------------

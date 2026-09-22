@@ -68,8 +68,17 @@ await page.getByLabel('Schema da seguire').selectOption({ label: 'Ciclo 4 giorni
 await page.waitForTimeout(200);
 await shot('04-rotazione-servizio');
 
+
+// --- Ore richieste per medico ---
+console.log('5. ore richieste');
+await page.getByLabel('Controlla le ore svolte').check();
+await page.getByLabel('Minimo').fill('24');
+await page.getByLabel('Massimo').fill('48');
+await page.waitForTimeout(200);
+await shot('05-ore-richieste');
+
 // --- Sale ---
-console.log('5. sale operative');
+console.log('6. sale operative');
 await tab('Sale operative');
 await page.getByPlaceholder(/Nome della sala/).fill('Terapia Intensiva A');
 await page.getByRole('button', { name: 'Aggiungi sala' }).click();
@@ -83,7 +92,7 @@ await page.waitForTimeout(80);
 const diurnismoRow = page.locator('.slot-grid tbody tr', { hasText: 'Diurnismo' }).first();
 await diurnismoRow.getByRole('button', { name: 'Lun–Ven' }).click();
 await page.waitForTimeout(150);
-await shot('05-griglia-turni');
+await shot('06-griglia-turni');
 
 await page.getByRole('button', { name: 'Chiudi' }).click();
 await page.getByPlaceholder(/Nome della sala/).fill('Guardia Notturna');
@@ -92,28 +101,45 @@ await page.waitForTimeout(200);
 const notteRow = page.locator('.slot-grid tbody tr', { hasText: 'Notte' }).first();
 await notteRow.getByRole('button', { name: 'Tutti' }).click();
 await page.waitForTimeout(150);
-await shot('06-seconda-sala');
+await shot('07-seconda-sala');
 
 // --- Dottori ---
-console.log('6. dottori');
+console.log('7. dottori');
 await tab('Dottori');
 for (const name of ['Rossi', 'Bianchi', 'Verdi', 'Neri', 'Gialli', 'Bruni']) {
   await page.getByPlaceholder(/Nome del dottore/).fill(name);
   await page.getByRole('button', { name: 'Aggiungi dottore' }).click();
   await page.waitForTimeout(80);
 }
-await shot('07-dottori');
+await shot('08-dottori');
+// --- Preferenze di un medico ---
+console.log('7b. preferenze del medico');
+await page.locator('.doctor-card', { hasText: 'Rossi' }).first()
+  .getByRole('button', { name: /Nessun vincolo|preferenze|divieti/ }).click();
+await page.waitForTimeout(200);
+
+// "No giovedi pomeriggio": un clic sulla casella la marca da evitare.
+const prefs = page.locator('.doctor-preferences').first();
+const pomRow = prefs.locator('tbody tr', { hasText: 'Pomeriggio' }).first();
+await pomRow.locator('td').nth(3).locator('.rule-cell').click();
+// Due clic sul sabato: divieto pieno.
+await pomRow.locator('td').nth(5).locator('.rule-cell').click();
+await pomRow.locator('td').nth(5).locator('.rule-cell').click();
+await prefs.getByRole('button', { name: 'Turni lunghi' }).click();
+await page.waitForTimeout(200);
+await shot('08b-preferenze-medico');
+
 
 // --- Generazione ---
-console.log('7. generazione');
+console.log('8. generazione');
 await tab('Genera');
 await page.waitForTimeout(200);
-await shot('08-genera');
+await shot('09-genera');
 await page.getByRole('button', { name: 'Genera calendario' }).click();
 await page.waitForSelector('text=/Bozza non salvata/', { timeout: 60000 });
 await page.waitForTimeout(400);
-console.log('8. calendario generato');
-await shot('09-calendario-per-sala');
+console.log('9. calendario generato');
+await shot('10-calendario-per-sala');
 
 // --- Viste del calendario ---
 for (const [view, name] of [['Per dottore', '10-per-dottore'], ['Griglia mese', '11-griglia-mese']]) {
@@ -125,7 +151,7 @@ await page.getByRole('button', { name: 'Per sala', exact: true }).click();
 await page.waitForTimeout(200);
 
 // --- Aggiunta multi-turno ---
-console.log('9. aggiunta multi-turno');
+console.log('10. aggiunta multi-turno');
 await page.getByRole('button', { name: 'Aggiungi turni' }).click();
 const dialog = page.getByRole('dialog', { name: 'Aggiungi turni' });
 await dialog.waitFor();
@@ -134,42 +160,42 @@ await dialog.locator('.mini-head-cell', { hasText: 'LUN' }).click();
 await dialog.getByRole('button', { name: 'Terapia Intensiva A', exact: true }).click();
 await dialog.getByRole('button', { name: 'Pomeriggio', exact: true }).click();
 await page.waitForTimeout(300);
-await shot('12-aggiunta-multiturno');
+await shot('13-aggiunta-multiturno');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(200);
 
 // --- Modifica di un turno via popover ---
-console.log('10. modifica turno');
+console.log('11. modifica turno');
 await page.locator('.chip').first().click();
 await page.waitForSelector('.popover');
-await shot('13-popover-modifica');
+await shot('14-popover-modifica');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(150);
 
 // --- Salvataggio versione ---
-console.log('11. salvataggio versione');
+console.log('12. salvataggio versione');
 await page.locator('.version-bar').getByRole('button', { name: 'Salva', exact: true }).click();
 await page.getByRole('dialog').getByRole('button', { name: 'Salva', exact: true }).click();
 await page.waitForTimeout(400);
-await shot('14-versione-salvata');
+await shot('15-versione-salvata');
 
 // --- Statistiche ---
-console.log('12. statistiche');
+console.log('13. statistiche');
 await tab('Statistiche');
 await page.waitForTimeout(400);
-await shot('15-statistiche');
+await shot('16-statistiche');
 
 // --- Secondo servizio ---
-console.log('13. secondo servizio');
+console.log('14. secondo servizio');
 await tab('Impostazioni');
 await page.getByRole('button', { name: 'Nuovo servizio' }).click();
 await page.getByLabel('Nome del servizio').fill('Piastra Operatoria');
 await page.getByRole('button', { name: 'Crea e apri' }).click();
 await page.waitForTimeout(500);
-await shot('16-nuovo-servizio');
+await shot('17-nuovo-servizio');
 await tab('Dottori');
 await page.waitForTimeout(200);
-await shot('17-servizio-vuoto');
+await shot('18-servizio-vuoto');
 
 const header = await page.locator('.service-switcher').innerText();
 console.log(`  servizio attivo: ${header.replace(/\n/g, ' ')}`);

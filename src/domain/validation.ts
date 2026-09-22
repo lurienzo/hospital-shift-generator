@@ -6,9 +6,12 @@ import {
   OperativeRoom,
   ScheduleSlot,
   Weekday,
+  WEEKDAY_LABELS,
 } from '../models/types';
 import { ShiftTypeIndex } from './shiftTypes';
 import { RotationFit, RotationTracker } from './rotation';
+import { DoctorRules } from './preferences';
+import { DoctorPeriodHours, HoursReport } from './hours';
 import { addDays, buildMonthDays, weekdayOfISODate } from '../utils/date';
 
 /**
@@ -185,7 +188,9 @@ export type ViolationCode =
   | 'exclusiveDay'
   | 'splitBlock'
   | 'offPattern'
-  | 'restedOnDuty';
+  | 'restedOnDuty'
+  | 'avoidedWeekday'
+  | 'aboveMaximumHours';
 
 export type Severity = 'error' | 'warning';
 
@@ -211,6 +216,8 @@ const SEVERITY: Record<ViolationCode, Severity> = {
   splitBlock: 'warning',
   offPattern: 'warning',
   restedOnDuty: 'warning',
+  avoidedWeekday: 'warning',
+  aboveMaximumHours: 'warning',
 };
 
 export interface ViolationContext {
@@ -224,6 +231,13 @@ export interface ViolationContext {
    * scostamenti dalla rotazione non vengono valutati.
    */
   rotation?: RotationTracker;
+  /** Divieti e preferenze dei medici su giorni e fasce. */
+  rules?: DoctorRules;
+  /**
+   * Ore per periodo. Le voci oltre il massimo vengono segnalate sui turni che
+   * compongono il periodo eccedente.
+   */
+  hours?: HoursReport;
 }
 
 export interface ViolationReport {
@@ -295,6 +309,8 @@ export function findViolations(
 
   // La rotazione va valutata scorrendo le date in ordine, perché la posizione
   // di ciascun medico dipende dal turno che ha svolto prima.
+  const rules = context.rules;
+  const overloaded = collectOverloadedPeriods(context.hours);
   const rotation = context.rotation?.clone();
   const rotationFits = new Map<string, RotationFit>();
   if (rotation) {
@@ -327,9 +343,13 @@ export function findViolations(
         `${assignment.doctorName} non lavora in ${assignment.roomName}`));
     }
 
-    if (doctor?.excludedWeekdays.includes(weekday)) {
+    const ruleLevel = rules?.levelFor(assignment.doctorId, weekday, assignment.shiftTypeId);
+    if (ruleLevel === 'never') {
       found.push(violation(assignment, 'excludedWeekday', 'Giorno escluso',
-        `${assignment.doctorName} non lavora in questo giorno della settimana`));
+        `${assignment.doctorName} non lavora ${describeWhen(weekday, shiftType.name)}`));
+    } else if (ruleLevel === 'avoid') {
+      found.push(violation(assignment, 'avoidedWeekday', 'Preferenza',
+        `${assignment.doctorName} preferisce non lavorare ${describeWhen(weekday, shiftType.name)}`));
     }
 
     if (siblings.some(other => other.shiftTypeId === assignment.shiftTypeId)) {
@@ -367,6 +387,13 @@ export function findViolations(
         `${shiftType.name} è una fascia a rotazione: il blocco dovrebbe essere coperto da un solo medico`));
     }
 
+    if (overloaded.has(overloadKey(assignment, context.hours))) {
+      const entry = overloaded.get(overloadKey(assignment, context.hours))!;
+      found.push(violation(assignment, 'aboveMaximumHours', 'Oltre le ore',
+        `${assignment.doctorName} arriva a ${formatHours(entry.hours)} nel periodo `
+        + `${entry.period.label}, ${formatHours(entry.gap)} oltre il massimo`));
+    }
+
     const fit = rotationFits.get(assignment.id);
     if (fit === 'shouldRest') {
       found.push(violation(assignment, 'restedOnDuty', 'Fuori rotazione',
@@ -396,6 +423,36 @@ function violation(
   detail: string,
 ): Violation {
   return { assignmentId: assignment.id, code, severity: SEVERITY[code], label, detail };
+}
+
+/** "il giovedì" oppure "il giovedì pomeriggio", secondo la granularità della regola. */
+function describeWhen(weekday: Weekday, shiftTypeName: string): string {
+  return `${WEEKDAY_LABELS[weekday].toLowerCase()} in fascia ${shiftTypeName.toLowerCase()}`;
+}
+
+/** Periodi in cui un medico supera il massimo di ore. */
+function collectOverloadedPeriods(report?: HoursReport): Map<string, DoctorPeriodHours> {
+  const result = new Map<string, DoctorPeriodHours>();
+  if (!report) return result;
+
+  for (const entry of report.entries) {
+    if (entry.status !== 'above') continue;
+    result.set(`${entry.doctorId}|${entry.period.key}`, entry);
+  }
+  return result;
+}
+
+/** Chiave del periodo a cui appartiene un turno, secondo la cadenza impostata. */
+function overloadKey(assignment: Assignment, report?: HoursReport): string {
+  if (!report) return '';
+  const period = report.periods.find(
+    candidate => assignment.date >= candidate.start && assignment.date <= candidate.end,
+  );
+  return period ? `${assignment.doctorId}|${period.key}` : '';
+}
+
+function formatHours(hours: number): string {
+  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
 }
 
 /** Descrizione del passo che la rotazione si aspettava, per il messaggio. */

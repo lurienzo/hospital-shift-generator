@@ -13,7 +13,12 @@
   overflow: hidden;
 }
 
+/*
+  Aperta, la scheda occupa tutta la riga: la griglia di giorni e fasce non
+  sta nella colonna stretta, e le etichette di riga venivano schiacciate via.
+*/
 .doctor-card.expanded {
+  grid-column: 1 / -1;
   border-color: var(--border-strong);
 }
 

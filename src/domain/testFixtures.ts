@@ -6,6 +6,7 @@ import {
   ScheduleSlot,
   ShiftType,
   Weekday,
+  WeekdayRule,
   WEEKDAYS,
 } from '../models/types';
 
@@ -32,9 +33,19 @@ export function makeDoctor(id: string, overrides: Partial<Doctor> = {}): Doctor 
     name: id.toUpperCase(),
     color: '#3b82f6',
     excludedRooms: [],
-    excludedWeekdays: [],
+    weekdayRules: [],
+    shiftLengthPreference: 'none',
     ...overrides,
   };
+}
+
+/** Regola per giorno, con `shiftTypeId` nullo per la giornata intera. */
+export function rule(
+  weekday: Weekday,
+  level: 'avoid' | 'never',
+  shiftTypeId: string | null = null,
+): WeekdayRule {
+  return { weekday, shiftTypeId, level };
 }
 
 export function makeSlot(

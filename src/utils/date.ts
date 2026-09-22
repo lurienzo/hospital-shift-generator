@@ -75,6 +75,23 @@ export function mondayFirstIndex(isoDate: string): number {
   return (parseISODate(isoDate).getDay() + 6) % 7;
 }
 
+/** Lunedì della settimana a cui appartiene la data. */
+export function startOfWeek(isoDate: string): string {
+  return addDays(isoDate, -mondayFirstIndex(isoDate));
+}
+
+/** Etichetta di una settimana, es. "6–12 aprile" oppure "30 mar – 5 apr". */
+export function formatWeekLabel(mondayISO: string): string {
+  const start = parseISODate(mondayISO);
+  const end = parseISODate(addDays(mondayISO, 6));
+  const monthName = (date: Date) => MONTH_NAMES[date.getMonth()].toLowerCase();
+
+  if (start.getMonth() === end.getMonth()) {
+    return `${start.getDate()}–${end.getDate()} ${monthName(start)}`;
+  }
+  return `${start.getDate()} ${monthName(start).slice(0, 3)} – ${end.getDate()} ${monthName(end).slice(0, 3)}`;
+}
+
 export interface MonthDay {
   day: number;
   date: string;

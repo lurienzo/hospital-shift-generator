@@ -145,6 +145,37 @@ export const OFF_STEP_LABELS: Record<'smonto' | 'riposo', string> = {
 };
 
 /**
+ * Ore che ogni medico dovrebbe svolgere nel periodo indicato.
+ *
+ * I contratti ospedalieri si esprimono di norma su base settimanale (36-42
+ * ore), ma il periodo è configurabile perché alcuni servizi ragionano sul
+ * mese.
+ */
+export type HoursPeriod = 'week' | 'month';
+
+export interface HoursRange {
+  min: number;
+  max: number;
+}
+
+export interface HoursTarget extends HoursRange {
+  enabled: boolean;
+  period: HoursPeriod;
+}
+
+export const DEFAULT_HOURS_TARGET: HoursTarget = {
+  enabled: false,
+  period: 'week',
+  min: 36,
+  max: 42,
+};
+
+export const HOURS_PERIOD_LABELS: Record<HoursPeriod, string> = {
+  week: 'settimana',
+  month: 'mese',
+};
+
+/**
  * Regola di rotazione del servizio: lo schema che i medici cercano di
  * seguire, indipendentemente dalla sala che fornisce il turno.
  *
@@ -183,12 +214,38 @@ export const DOCTOR_COLORS = [
   '#03a9f4', '#cddc39', '#ffc107', '#4caf50', '#2196f3',
 ];
 
+/**
+ * Quanto è stringente un vincolo su una giornata.
+ *
+ * `never` è un divieto e produce un errore; `avoid` è una preferenza e
+ * produce un avviso. Lo stesso meccanismo copre entrambi i casi, così non
+ * esistono due elenchi separati da tenere coerenti.
+ */
+export type RuleLevel = 'avoid' | 'never';
+
+export interface WeekdayRule {
+  weekday: Weekday;
+  /** Fascia interessata, oppure `null` per la giornata intera. */
+  shiftTypeId: string | null;
+  level: RuleLevel;
+}
+
+/**
+ * Preferenza sulla durata dei turni. La soglia fra lungo e breve dipende
+ * dalle fasce configurate nel servizio, non da un numero fisso.
+ */
+export type ShiftLengthPreference = 'none' | 'long' | 'short';
+
 export interface Doctor {
   id: string;
   name: string;
   color: string;
   excludedRooms: string[];
-  excludedWeekdays: Weekday[];
+  /** Divieti e preferenze per giorno della settimana, anche per singola fascia. */
+  weekdayRules: WeekdayRule[];
+  shiftLengthPreference: ShiftLengthPreference;
+  /** Ore proprie del medico, quando diverse da quelle del servizio. */
+  hoursOverride?: HoursRange;
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import {
   Assignment,
   DoctorStats,
   GenerationConfig,
+  HoursTarget,
   OperativeRoom,
   RotationRule,
   ShiftScheme,
@@ -11,11 +12,13 @@ import {
 import { ShiftTypeIndex, blockIndexOf } from '../domain/shiftTypes';
 import { computeStats } from '../domain/stats';
 import { measureAdherence } from '../domain/rotation';
+import { buildHoursReport } from '../domain/hours';
 import { AvailabilityRules, RoomSlotIndex, findViolations } from '../domain/validation';
 import {
   AFTERNOON,
   DIURNISMO,
   EVERY_DAY,
+  LONG,
   MORNING,
   NIGHT,
   WORKDAYS,
@@ -23,9 +26,10 @@ import {
   makeDoctor,
   makeRoom,
   makeSlot,
+  rule,
   slotsOn,
 } from '../domain/testFixtures';
-import { addDays } from '../utils/date';
+import { addDays, weekdayOfISODate } from '../utils/date';
 import { ScheduleGeneratorService } from './ScheduleGeneratorService';
 
 const YEAR = 2026;
@@ -50,6 +54,7 @@ function run(options: {
   shiftTypes?: ShiftType[];
   schemes?: ShiftScheme[];
   rotationRule?: RotationRule;
+  hoursTarget?: HoursTarget;
   config?: Partial<GenerationConfig>;
   priorStats?: DoctorStats[];
   priorAssignments?: Assignment[];
@@ -66,6 +71,7 @@ function run(options: {
     shiftTypes,
     schemes: options.schemes ?? [],
     rotationRule: options.rotationRule,
+    hoursTarget: options.hoursTarget,
     config: emptyConfig(options.config),
     priorStats: options.priorStats,
     priorAssignments: options.priorAssignments,
@@ -514,6 +520,219 @@ describe('rotazione del servizio', () => {
     const result = await generator.generate(15);
     expect(result.coverageGaps).toBe(0);
   });
+});
+
+describe('ore richieste per medico', () => {
+  const weekly: HoursTarget = { enabled: true, period: 'week', min: 0, max: 24 };
+
+  it('non supera il massimo di ore del periodo', async () => {
+    // Notti da 12 ore ogni giorno: col tetto a 24 nessuno puo farne piu di due
+    // per settimana.
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, NIGHT.id));
+    const { generator, doctors, shiftTypes } = run({
+      rooms: [room],
+      doctorIds: ['a', 'b', 'c', 'd', 'e', 'f'],
+      hoursTarget: weekly,
+    });
+
+    const result = await generator.generate(30);
+    const report = buildHoursReport({
+      year: YEAR,
+      month: MONTH,
+      target: weekly,
+      doctors,
+      shiftTypes,
+      assignments: result.schedule.assignments,
+      known: { from: '2026-04-01', to: '2026-04-30' },
+    });
+
+    expect(report.entries.filter(entry => entry.status === 'above')).toHaveLength(0);
+  }, 20000);
+
+  it('lascia turni scoperti invece di sfondare il tetto', async () => {
+    // Un solo medico e tetto a 24 ore: oltre due notti a settimana non si puo.
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, NIGHT.id));
+    const { generator } = run({
+      rooms: [room],
+      doctorIds: ['a'],
+      hoursTarget: weekly,
+    });
+
+    const result = await generator.generate(10);
+
+    expect(result.coverageGaps).toBeGreaterThan(0);
+    expect(result.schedule.assignments.length).toBeLessThanOrEqual(12);
+  });
+
+  it('senza limite di ore copre tutto', async () => {
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, NIGHT.id));
+    const { generator } = run({ rooms: [room], doctorIds: ['a', 'b'] });
+
+    const result = await generator.generate(10);
+    expect(result.coverageGaps).toBe(0);
+  });
+
+  it('rispetta le ore proprie di un singolo medico', async () => {
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, NIGHT.id));
+    const shiftTypes = new ShiftTypeIndex([NIGHT]);
+    const doctors = [
+      // "a" puo fare una sola notte per settimana, gli altri due.
+      makeDoctor('a', { hoursOverride: { min: 0, max: 12 } }),
+      makeDoctor('b'),
+      makeDoctor('c'),
+      makeDoctor('d'),
+    ];
+
+    const generator = new ScheduleGeneratorService({
+      rooms: [room],
+      doctors,
+      shiftTypes,
+      schemes: [],
+      config: emptyConfig(),
+      hoursTarget: weekly,
+    });
+
+    const result = await generator.generate(30);
+    const report = buildHoursReport({
+      year: YEAR,
+      month: MONTH,
+      target: weekly,
+      doctors,
+      shiftTypes,
+      assignments: result.schedule.assignments,
+      known: { from: '2026-04-01', to: '2026-04-30' },
+    });
+
+    const forA = report.entries.filter(entry => entry.doctorId === 'a');
+    expect(forA.every(entry => entry.hours <= 12)).toBe(true);
+  }, 20000);
+});
+
+describe('preferenze dei medici', () => {
+  it('non assegna mai un giorno vietato', async () => {
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, MORNING.id));
+    const shiftTypes = new ShiftTypeIndex([MORNING]);
+    const doctors = [
+      makeDoctor('a', { weekdayRules: [rule('monday', 'never')] }),
+      makeDoctor('b'),
+    ];
+
+    const generator = new ScheduleGeneratorService({
+      rooms: [room], doctors, shiftTypes, schemes: [], config: emptyConfig(),
+    });
+
+    const result = await generator.generate(20);
+    const mondays = result.schedule.assignments.filter(
+      item => weekdayOfISODate(item.date) === 'monday',
+    );
+
+    expect(mondays.length).toBeGreaterThan(0);
+    expect(mondays.some(item => item.doctorId === 'a')).toBe(false);
+    expect(result.coverageGaps).toBe(0);
+  });
+
+  it('evita i giorni sconsigliati quando ci sono alternative', async () => {
+    const room = makeRoom('sala1', slotsOn(EVERY_DAY, MORNING.id));
+    const shiftTypes = new ShiftTypeIndex([MORNING]);
+    const doctors = [
+      makeDoctor('a', { weekdayRules: [rule('thursday', 'avoid')] }),
+      makeDoctor('b'),
+      makeDoctor('c'),
+    ];
+
+    const generator = new ScheduleGeneratorService({
+      rooms: [room], doctors, shiftTypes, schemes: [], config: emptyConfig(),
+    });
+
+    const result = await generator.generate(40);
+    const thursdays = result.schedule.assignments.filter(
+      item => weekdayOfISODate(item.date) === 'thursday',
+    );
+
+    expect(thursdays.length).toBeGreaterThan(0);
+    expect(thursdays.some(item => item.doctorId === 'a')).toBe(false);
+  }, 20000);
+
+  it('copre il turno anche se tutti preferiscono evitarlo', async () => {
+    // La preferenza non e un divieto: se nessuno e libero, si assegna comunque.
+    const room = makeRoom('sala1', slotsOn(['thursday'], MORNING.id));
+    const shiftTypes = new ShiftTypeIndex([MORNING]);
+    const doctors = [
+      makeDoctor('a', { weekdayRules: [rule('thursday', 'avoid')] }),
+      makeDoctor('b', { weekdayRules: [rule('thursday', 'avoid')] }),
+    ];
+
+    const generator = new ScheduleGeneratorService({
+      rooms: [room], doctors, shiftTypes, schemes: [], config: emptyConfig(),
+    });
+
+    const result = await generator.generate(10);
+    expect(result.coverageGaps).toBe(0);
+  });
+
+  it('rispetta la sola fascia sconsigliata', async () => {
+    const room = makeRoom('sala1', [
+      ...slotsOn(EVERY_DAY, MORNING.id),
+      ...slotsOn(EVERY_DAY, AFTERNOON.id),
+    ]);
+    const shiftTypes = new ShiftTypeIndex([MORNING, AFTERNOON]);
+    const doctors = [
+      // "No giovedi pomeriggio": il mattino del giovedi resta possibile.
+      makeDoctor('a', { weekdayRules: [rule('thursday', 'avoid', AFTERNOON.id)] }),
+      makeDoctor('b'),
+      makeDoctor('c'),
+    ];
+
+    const generator = new ScheduleGeneratorService({
+      rooms: [room], doctors, shiftTypes, schemes: [], config: emptyConfig(),
+    });
+
+    const result = await generator.generate(40);
+    const thursdayAfternoons = result.schedule.assignments.filter(
+      item => weekdayOfISODate(item.date) === 'thursday' && item.shiftTypeId === AFTERNOON.id,
+    );
+
+    expect(thursdayAfternoons.some(item => item.doctorId === 'a')).toBe(false);
+  }, 20000);
+
+  it('privilegia la durata di turno preferita', async () => {
+    // Una sala con turni da 6 ore e una con turni da 12: chi preferisce i
+    // lunghi dovrebbe finire piu spesso nella seconda.
+    const rooms = [
+      makeRoom('brevi', slotsOn(EVERY_DAY, MORNING.id)),
+      makeRoom('lunghi', slotsOn(EVERY_DAY, LONG.id)),
+    ];
+    const shiftTypes = new ShiftTypeIndex([MORNING, LONG]);
+    const doctors = [
+      makeDoctor('a', { shiftLengthPreference: 'long' }),
+      makeDoctor('b', { shiftLengthPreference: 'short' }),
+      makeDoctor('c'),
+      makeDoctor('d'),
+    ];
+
+    const generator = new ScheduleGeneratorService({
+      rooms, doctors, shiftTypes, schemes: [], config: emptyConfig(),
+    });
+
+    const result = await generator.generate(40);
+    const longOfA = result.schedule.assignments.filter(
+      item => item.doctorId === 'a' && item.shiftTypeId === LONG.id,
+    ).length;
+    const shortOfA = result.schedule.assignments.filter(
+      item => item.doctorId === 'a' && item.shiftTypeId === MORNING.id,
+    ).length;
+
+    const shortOfB = result.schedule.assignments.filter(
+      item => item.doctorId === 'b' && item.shiftTypeId === MORNING.id,
+    ).length;
+    const longOfB = result.schedule.assignments.filter(
+      item => item.doctorId === 'b' && item.shiftTypeId === LONG.id,
+    ).length;
+
+    expect(longOfA).toBeGreaterThan(shortOfA);
+    expect(shortOfB).toBeGreaterThan(longOfB);
+    expect(result.coverageGaps).toBe(0);
+  }, 20000);
 });
 
 describe('equità della distribuzione', () => {

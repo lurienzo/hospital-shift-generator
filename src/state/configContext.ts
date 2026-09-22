@@ -1,5 +1,13 @@
 import { createContext, useContext } from 'react';
-import { Doctor, OperativeRoom, RotationRule, ShiftScheme, ShiftType } from '../models/types';
+import {
+  Doctor,
+  HoursTarget,
+  OperativeRoom,
+  RotationRule,
+  ShiftScheme,
+  ShiftType,
+} from '../models/types';
+import { DoctorRules, ShiftLengthScale } from '../domain/preferences';
 import { ShiftTypeIndex } from '../domain/shiftTypes';
 
 /**
@@ -25,6 +33,13 @@ export interface ConfigValue {
   setRotationRule: (rule: RotationRule) => void;
   /** Schema della regola, se esiste ed è utilizzabile. */
   rotationScheme: ShiftScheme | null;
+  /** Ore minime e massime per medico nel periodo impostato. */
+  hoursTarget: HoursTarget;
+  setHoursTarget: (target: HoursTarget) => void;
+  /** Divieti e preferenze dei medici su giorni e fasce. */
+  doctorRules: DoctorRules;
+  /** Soglia fra turni lunghi e brevi, ricavata dalle fasce configurate. */
+  lengthScale: ShiftLengthScale;
   reset: () => void;
 }
 

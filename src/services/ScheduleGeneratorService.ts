@@ -4,6 +4,8 @@ import {
   Doctor,
   DoctorStats,
   GenerationConfig,
+  DEFAULT_HOURS_TARGET,
+  HoursTarget,
   MonthlySchedule,
   NO_ROTATION_RULE,
   OperativeRoom,
@@ -15,6 +17,14 @@ import {
 import { ShiftTypeIndex, blockIndexOf } from '../domain/shiftTypes';
 import { isSchemeUsable } from '../domain/schemes';
 import { RotationFit, RotationTracker } from '../domain/rotation';
+import {
+  DoctorRules,
+  LengthFit,
+  ShiftLengthScale,
+  buildShiftLengthScale,
+  lengthFit,
+} from '../domain/preferences';
+import { HoursLedger, KnownRange, buildHoursReport } from '../domain/hours';
 import { computeStats } from '../domain/stats';
 import {
   AvailabilityRules,
@@ -25,7 +35,13 @@ import {
   findViolations,
   requirementKey,
 } from '../domain/validation';
-import { addDays, buildISODate, mondayFirstIndex } from '../utils/date';
+import {
+  addDays,
+  buildISODate,
+  getDaysInMonth,
+  mondayFirstIndex,
+  weekdayOfISODate,
+} from '../utils/date';
 import { generateId } from '../utils/id';
 
 export interface GenerationProgress {
@@ -60,6 +76,8 @@ export interface GeneratorInput {
   config: GenerationConfig;
   /** Regola di rotazione del servizio, valida per tutte le sale. */
   rotationRule?: RotationRule;
+  /** Ore minime e massime per medico nel periodo impostato. */
+  hoursTarget?: HoursTarget;
   /** Statistiche dei mesi precedenti, per bilanciare sull'anno. */
   priorStats?: DoctorStats[];
   /**
@@ -97,6 +115,12 @@ const PENALTY = {
   // la scelta fra tentativi, non tanto da valere più di un turno scoperto.
   offPattern: 4,
   restedOnDuty: 12,
+  // Preferenze dei medici: contano, ma meno di un vincolo.
+  avoidedWeekday: 6,
+  againstLengthPreference: 2,
+  // Ore fuori dall'intervallo richiesto, per ogni ora di scarto.
+  hoursBelowMin: 3,
+  hoursAboveMax: 15,
 } as const;
 
 export class ScheduleGeneratorService {
@@ -113,6 +137,12 @@ export class ScheduleGeneratorService {
   /** Proprietario di un blocco a rotazione iniziato nel mese precedente. */
   private readonly inheritedBlockOwners: Map<string, string>;
   private readonly rotationRule: RotationRule;
+  private readonly rules: DoctorRules;
+  private readonly lengthScale: ShiftLengthScale;
+  private readonly hoursTarget: HoursTarget;
+  private readonly priorAssignments: Assignment[];
+  /** Intervallo di date per cui conosciamo tutte le assegnazioni. */
+  private readonly knownRange: KnownRange;
   /** Rotazione già avviata col mese precedente, da clonare a ogni tentativo. */
   private readonly rotationSeed: RotationTracker;
 
@@ -138,6 +168,30 @@ export class ScheduleGeneratorService {
       this.requirements.map(requirement => [requirementKey(requirement), requirement]),
     );
     this.inheritedBlockOwners = collectBlockOwners(input.priorAssignments ?? [], input.shiftTypes);
+
+    this.rules = new DoctorRules(input.doctors);
+    this.priorAssignments = input.priorAssignments ?? [];
+
+    // Le settimane a cavallo del mese si possono giudicare solo se abbiamo il
+    // mese precedente; il mese successivo non è ancora stato generato.
+    const firstDay = buildISODate(input.config.year, input.config.month, 1);
+    const earliestPrior = this.priorAssignments
+      .reduce<string | null>(
+        (earliest, assignment) =>
+          earliest === null || assignment.date < earliest ? assignment.date : earliest,
+        null,
+      );
+    this.knownRange = {
+      from: earliestPrior !== null && earliestPrior < firstDay ? earliestPrior : firstDay,
+      to: buildISODate(
+        input.config.year,
+        input.config.month,
+        getDaysInMonth(input.config.year, input.config.month),
+      ),
+    };
+
+    this.lengthScale = buildShiftLengthScale(input.shiftTypes.all);
+    this.hoursTarget = input.hoursTarget ?? { ...DEFAULT_HOURS_TARGET, enabled: false };
 
     this.rotationRule = input.rotationRule ?? NO_ROTATION_RULE;
     const rotationScheme = input.schemes.find(
@@ -221,6 +275,8 @@ export class ScheduleGeneratorService {
     });
     const gaps = findCoverageGaps(this.requirements, assignments).length;
     const drift = this.rotationDrift(assignments);
+    const preferences = this.preferenceCost(assignments);
+    const hours = this.hoursCost(assignments);
 
     const score =
       gaps * PENALTY.coverageGap +
@@ -228,6 +284,8 @@ export class ScheduleGeneratorService {
       report.warnings.length * PENALTY.warning +
       drift.offPattern * PENALTY.offPattern +
       drift.shouldRest * PENALTY.restedOnDuty +
+      preferences +
+      hours +
       this.fairnessCost(stats);
 
     return {
@@ -265,6 +323,53 @@ export class ScheduleGeneratorService {
     }
 
     return { offPattern, shouldRest };
+  }
+
+  /** Quanto un calendario contraddice le preferenze dichiarate dai medici. */
+  private preferenceCost(assignments: Assignment[]): number {
+    let cost = 0;
+
+    for (const assignment of assignments) {
+      const doctor = this.doctorById.get(assignment.doctorId);
+      if (!doctor) continue;
+
+      const weekday = weekdayOfISODate(assignment.date);
+      if (this.rules.discourages(doctor.id, weekday, assignment.shiftTypeId)) {
+        cost += PENALTY.avoidedWeekday;
+      }
+      if (this.fitFor(doctor, assignment.shiftTypeId) === 'againstPreference') {
+        cost += PENALTY.againstLengthPreference;
+      }
+    }
+
+    return cost;
+  }
+
+  /**
+   * Scarto dalle ore richieste. I periodi che escono dal mese non vengono
+   * giudicati sul minimo: le ore dei giorni non visibili possono solo
+   * aggiungersi.
+   */
+  private hoursCost(assignments: Assignment[]): number {
+    if (!this.hoursTarget.enabled) return 0;
+
+    const report = buildHoursReport({
+      year: this.config.year,
+      month: this.config.month,
+      target: this.hoursTarget,
+      doctors: this.doctors,
+      shiftTypes: this.shiftTypes,
+      assignments: [...this.priorAssignments, ...assignments],
+      known: this.knownRange,
+    });
+
+    let cost = 0;
+    for (const entry of report.entries) {
+      if (entry.status === 'below') cost += entry.gap * PENALTY.hoursBelowMin;
+      else if (entry.status === 'above') cost += entry.gap * PENALTY.hoursAboveMax;
+    }
+
+    return cost;
   }
 
   /** Squilibrio del carico fra medici, mesi precedenti inclusi se richiesto. */
@@ -317,7 +422,12 @@ export class ScheduleGeneratorService {
     const random = createSeededRandom(seed);
     // Ogni tentativo parte dalla stessa posizione di rotazione: il clone
     // impedisce che un tentativo erediti gli spostamenti del precedente.
-    const ledger = new DoctorLedger(this.doctors, this.priorStats, this.rotationSeed.clone());
+    const ledger = new DoctorLedger(
+      this.doctors,
+      this.priorStats,
+      this.rotationSeed.clone(),
+      new HoursLedger(this.hoursTarget, this.doctors, this.shiftTypes),
+    );
 
     const locked: Assignment[] = this.config.prefilledAssignments.map(assignment => ({
       ...assignment,
@@ -613,8 +723,14 @@ export class ScheduleGeneratorService {
     options: { ignoreOffDay?: boolean } = {},
   ): boolean {
     if (doctor.excludedRooms.includes(requirement.roomId)) return false;
-    if (doctor.excludedWeekdays.includes(requirement.weekday)) return false;
+    if (this.rules.forbids(doctor.id, requirement.weekday, requirement.shiftTypeId)) return false;
     if (this.availability.isBlocked(doctor.id, requirement.date, requirement.shiftTypeId)) return false;
+
+    // Il massimo di ore è un tetto: superarlo non è un compromesso
+    // accettabile, quindi vale come divieto.
+    if (ledger.hours.wouldExceedMax(doctor.id, requirement.date, requirement.shiftTypeId)) {
+      return false;
+    }
     if (ledger.isResting(doctor.id, requirement.date)) return false;
     if (!options.ignoreOffDay && ledger.isOff(doctor.id, requirement.date)) return false;
     if (ledger.hasExclusiveShift(doctor.id, requirement.date)) return false;
@@ -656,11 +772,30 @@ export class ScheduleGeneratorService {
       const bFit = rotationRank(ledger.rotation.fit(b.id, requirement.date, requirement.shiftTypeId));
       if (aFit !== bFit) return aFit - bFit;
 
+      // Le giornate che il medico preferisce evitare vengono dopo la
+      // rotazione ma prima dell'equità: è una richiesta personale, non un
+      // vincolo di servizio.
+      const aAvoid = this.rules.discourages(a.id, requirement.weekday, requirement.shiftTypeId) ? 1 : 0;
+      const bAvoid = this.rules.discourages(b.id, requirement.weekday, requirement.shiftTypeId) ? 1 : 0;
+      if (aAvoid !== bAvoid) return aAvoid - bAvoid;
+
+      // Chi è sotto il minimo di ore del periodo ha la precedenza: è il modo
+      // di far convergere tutti verso l'intervallo richiesto.
+      if (ledger.hours.enabled) {
+        const aBelow = ledger.hours.isBelowMin(a.id, requirement.date) ? 0 : 1;
+        const bBelow = ledger.hours.isBelowMin(b.id, requirement.date) ? 0 : 1;
+        if (aBelow !== bBelow) return aBelow - bBelow;
+      }
+
       // Il secondo giorno di riposo è una preferenza, non un divieto: si evita
       // quando c'è alternativa, ma non lascia il turno scoperto.
       const aRest = ledger.isOnSecondRest(a.id, requirement.date) ? 1 : 0;
       const bRest = ledger.isOnSecondRest(b.id, requirement.date) ? 1 : 0;
       if (aRest !== bRest) return aRest - bRest;
+
+      const aLength = lengthRank(this.fitFor(a, requirement.shiftTypeId));
+      const bLength = lengthRank(this.fitFor(b, requirement.shiftTypeId));
+      if (aLength !== bLength) return aLength - bLength;
 
       if (requirement.isCritical) {
         const difference = ledger.critical(a.id) - ledger.critical(b.id);
@@ -690,6 +825,13 @@ export class ScheduleGeneratorService {
 
       return (tiebreak.get(a.id) ?? 0) - (tiebreak.get(b.id) ?? 0);
     })[0];
+  }
+
+  /** Come un turno si rapporta alla preferenza di durata del medico. */
+  private fitFor(doctor: Doctor, shiftTypeId: string): LengthFit {
+    return lengthFit(
+      doctor.shiftLengthPreference, shiftTypeId, this.shiftTypes, this.lengthScale,
+    );
   }
 
   /** Medico per un blocco di turni: deve poter coprire la maggior parte del blocco. */
@@ -793,6 +935,7 @@ class DoctorLedger {
     doctors: Doctor[],
     priorStats: Map<string, DoctorStats>,
     readonly rotation: RotationTracker,
+    readonly hours: HoursLedger,
   ) {
     for (const doctor of doctors) {
       const prior = priorStats.get(doctor.id);
@@ -824,6 +967,7 @@ class DoctorLedger {
     this.busySlots.add(`${doctorId}|${date}|${assignment.shiftTypeId}`);
     this.roomsPerDay.add(`${doctorId}|${date}|${assignment.roomId}`);
     this.rotation.record(doctorId, date, assignment.shiftTypeId);
+    this.hours.add(doctorId, date, assignment.shiftTypeId);
 
     if (!requirement) return;
 
@@ -875,6 +1019,13 @@ class DoctorLedger {
  * nello schema restano in mezzo: la regola non ha ancora nulla da dire su di
  * loro, e metterli in coda impedirebbe alla rotazione di avviarsi.
  */
+/** Ordine di preferenza rispetto alla durata desiderata dei turni. */
+function lengthRank(fit: LengthFit): number {
+  if (fit === 'preferred') return 0;
+  if (fit === 'neutral') return 1;
+  return 2;
+}
+
 function rotationRank(fit: RotationFit): number {
   switch (fit) {
     case 'inPattern': return 0;

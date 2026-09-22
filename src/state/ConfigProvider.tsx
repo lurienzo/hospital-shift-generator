@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, ReactNode } from 'react';
-import { Doctor, OperativeRoom, RotationRule, ShiftScheme, ShiftType } from '../models/types';
+import {
+  Doctor,
+  HoursTarget,
+  OperativeRoom,
+  RotationRule,
+  ShiftScheme,
+  ShiftType,
+} from '../models/types';
+import { DoctorRules, buildShiftLengthScale } from '../domain/preferences';
 import { ShiftTypeIndex } from '../domain/shiftTypes';
 import { buildBuiltInSchemes, isSchemeUsable } from '../domain/schemes';
 import { StorageService } from '../services/StorageService';
@@ -15,12 +23,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [rotationRule, setRotationRule] = useState<RotationRule>(
     () => StorageService.loadRotationRule(),
   );
+  const [hoursTarget, setHoursTarget] = useState<HoursTarget>(
+    () => StorageService.loadHoursTarget(),
+  );
 
   useEffect(() => { StorageService.saveRooms(rooms); }, [rooms]);
   useEffect(() => { StorageService.saveDoctors(doctors); }, [doctors]);
   useEffect(() => { StorageService.saveShiftTypes(shiftTypes); }, [shiftTypes]);
   useEffect(() => { StorageService.saveCustomSchemes(customSchemes); }, [customSchemes]);
   useEffect(() => { StorageService.saveRotationRule(rotationRule); }, [rotationRule]);
+  useEffect(() => { StorageService.saveHoursTarget(hoursTarget); }, [hoursTarget]);
 
   const shiftTypeIndex = useMemo(() => new ShiftTypeIndex(shiftTypes), [shiftTypes]);
 
@@ -35,6 +47,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return isSchemeUsable(found, shiftTypeIndex) ? found : null;
   }, [schemes, rotationRule.schemeId, shiftTypeIndex]);
 
+  const doctorRules = useMemo(() => new DoctorRules(doctors), [doctors]);
+  const lengthScale = useMemo(() => buildShiftLengthScale(shiftTypes), [shiftTypes]);
+
   const reset = useCallback(() => {
     StorageService.clearAll();
     setRooms([]);
@@ -42,6 +57,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setShiftTypes(StorageService.loadShiftTypes());
     setCustomSchemes([]);
     setRotationRule(StorageService.loadRotationRule());
+    setHoursTarget(StorageService.loadHoursTarget());
   }, []);
 
   const value = useMemo<ConfigValue>(() => ({
@@ -58,10 +74,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     rotationRule,
     setRotationRule,
     rotationScheme,
+    hoursTarget,
+    setHoursTarget,
+    doctorRules,
+    lengthScale,
     reset,
   }), [
     rooms, doctors, shiftTypes, shiftTypeIndex, schemes, customSchemes,
-    rotationRule, rotationScheme, reset,
+    rotationRule, rotationScheme, hoursTarget, doctorRules, lengthScale, reset,
   ]);
 
   return <ConfigContext.Provider value={value}>{children}</ConfigContext.Provider>;

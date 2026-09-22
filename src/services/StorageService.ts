@@ -3,6 +3,8 @@ import {
   DEFAULT_SHIFT_TYPES,
   Doctor,
   GenerationConfig,
+  DEFAULT_HOURS_TARGET,
+  HoursTarget,
   MonthlySchedule,
   NO_ROTATION_RULE,
   OperativeRoom,
@@ -11,6 +13,8 @@ import {
   ScheduleVersion,
   ShiftScheme,
   ShiftType,
+  Weekday,
+  WeekdayRule,
 } from '../models/types';
 import { ShiftTypeIndex, sortShiftTypes } from '../domain/shiftTypes';
 import { computeStats, buildStatColumns, summarizeColumns } from '../domain/stats';
@@ -99,6 +103,45 @@ function normalizeSlot(slot: LegacySlot): ScheduleSlot {
   };
 }
 
+/**
+ * I medici delle versioni precedenti avevano un solo elenco di giorni vietati,
+ * senza granularità di fascia né livello di preferenza: diventa un divieto di
+ * giornata intera fra le nuove regole.
+ */
+type LegacyDoctor = Doctor & { excludedWeekdays?: Weekday[] };
+
+function normalizeDoctor(doctor: LegacyDoctor): Doctor {
+  const { excludedWeekdays, ...rest } = doctor;
+
+  const fromLegacy: WeekdayRule[] = (excludedWeekdays ?? []).map(weekday => ({
+    weekday,
+    shiftTypeId: null,
+    level: 'never' as const,
+  }));
+
+  const existing = (rest.weekdayRules ?? []).filter(
+    rule => rule.weekday !== undefined && rule.level !== undefined,
+  );
+
+  // Le regole già convertite hanno la precedenza, per non duplicare una voce
+  // se una conversione precedente è già avvenuta.
+  const merged = [...existing];
+  for (const legacy of fromLegacy) {
+    const alreadyThere = merged.some(
+      rule => rule.weekday === legacy.weekday && rule.shiftTypeId === null,
+    );
+    if (!alreadyThere) merged.push(legacy);
+  }
+
+  return {
+    ...rest,
+    excludedRooms: rest.excludedRooms ?? [],
+    weekdayRules: merged,
+    shiftLengthPreference: rest.shiftLengthPreference ?? 'none',
+    hoursOverride: rest.hoursOverride,
+  };
+}
+
 /** Ciclo per sala delle versioni precedenti, ora sostituito dalla regola di servizio. */
 type LegacyRoom = OperativeRoom & { cycle?: unknown };
 
@@ -169,6 +212,24 @@ export class StorageService {
     write('rotationRule', rule);
   }
 
+  // ----- Ore richieste per medico -----
+
+  static loadHoursTarget(): HoursTarget {
+    const stored = read<Partial<HoursTarget> | null>('hoursTarget', null);
+    if (!stored) return { ...DEFAULT_HOURS_TARGET };
+
+    return {
+      enabled: stored.enabled === true,
+      period: stored.period === 'month' ? 'month' : 'week',
+      min: Number.isFinite(stored.min) ? Number(stored.min) : DEFAULT_HOURS_TARGET.min,
+      max: Number.isFinite(stored.max) ? Number(stored.max) : DEFAULT_HOURS_TARGET.max,
+    };
+  }
+
+  static saveHoursTarget(target: HoursTarget): void {
+    write('hoursTarget', target);
+  }
+
   // ----- Sale e medici -----
 
   static loadRooms(): OperativeRoom[] {
@@ -180,11 +241,7 @@ export class StorageService {
   }
 
   static loadDoctors(): Doctor[] {
-    return read<Doctor[]>('doctors', []).map(doctor => ({
-      ...doctor,
-      excludedRooms: doctor.excludedRooms ?? [],
-      excludedWeekdays: doctor.excludedWeekdays ?? [],
-    }));
+    return read<LegacyDoctor[]>('doctors', []).map(normalizeDoctor);
   }
 
   static saveDoctors(doctors: Doctor[]): void {

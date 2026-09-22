@@ -8,6 +8,7 @@ import {
   findViolations,
   primaryViolation,
 } from './validation';
+import { DoctorRules } from './preferences';
 import {
   AFTERNOON,
   DIURNISMO,
@@ -19,6 +20,7 @@ import {
   makeDoctor,
   makeRoom,
   makeSlot,
+  rule,
   slotsOn,
 } from './testFixtures';
 
@@ -195,7 +197,7 @@ describe('findViolations', () => {
     const room = makeRoom('sala1', slotsOn(['monday'], MORNING.id));
     const restricted = [
       makeDoctor('rossi', { excludedRooms: ['sala1'] }),
-      makeDoctor('bianchi', { excludedWeekdays: ['monday'] }),
+      makeDoctor('bianchi', { weekdayRules: [rule('monday', 'never')] }),
     ];
 
     const report = findViolations([
@@ -207,10 +209,64 @@ describe('findViolations', () => {
       shiftTypes,
       availability: new AvailabilityRules({}),
       slotIndex: new RoomSlotIndex([room]),
+      rules: new DoctorRules(restricted),
     });
 
     expect(primaryViolation(report, 'a1')?.code).toBe('excludedRoom');
     expect(primaryViolation(report, 'a2')?.code).toBe('excludedWeekday');
+  });
+
+  it('distingue la preferenza dal divieto sullo stesso giorno', () => {
+    const room = makeRoom('sala1', slotsOn(['monday'], MORNING.id));
+    // Rossi preferisce evitare il lunedì mattina, Bianchi non lo fa mai.
+    const people = [
+      makeDoctor('rossi', { weekdayRules: [rule('monday', 'avoid', MORNING.id)] }),
+      makeDoctor('bianchi', { weekdayRules: [rule('monday', 'never', MORNING.id)] }),
+    ];
+
+    const report = findViolations([
+      makeAssignment('a1', '2026-04-06', 'sala1', MORNING.id, 'rossi'),
+      makeAssignment('a2', '2026-04-06', 'sala1', MORNING.id, 'bianchi'),
+    ], {
+      rooms: [room],
+      doctors: people,
+      shiftTypes,
+      availability: new AvailabilityRules({}),
+      slotIndex: new RoomSlotIndex([room]),
+      rules: new DoctorRules(people),
+    });
+
+    const forRossi = primaryViolation(report, 'a1')!;
+    expect(forRossi.code).toBe('avoidedWeekday');
+    expect(forRossi.severity).toBe('warning');
+
+    const forBianchi = primaryViolation(report, 'a2')!;
+    expect(forBianchi.code).toBe('excludedWeekday');
+    expect(forBianchi.severity).toBe('error');
+  });
+
+  it('non segnala una fascia diversa da quella evitata', () => {
+    const room = makeRoom('sala1', [
+      ...slotsOn(['monday'], MORNING.id),
+      ...slotsOn(['monday'], AFTERNOON.id),
+    ]);
+    // Solo il lunedì pomeriggio è da evitare.
+    const people = [makeDoctor('rossi', { weekdayRules: [rule('monday', 'avoid', AFTERNOON.id)] })];
+
+    const report = findViolations([
+      makeAssignment('a1', '2026-04-06', 'sala1', MORNING.id, 'rossi'),
+      makeAssignment('a2', '2026-04-06', 'sala1', AFTERNOON.id, 'rossi'),
+    ], {
+      rooms: [room],
+      doctors: people,
+      shiftTypes,
+      availability: new AvailabilityRules({}),
+      slotIndex: new RoomSlotIndex([room]),
+      rules: new DoctorRules(people),
+    });
+
+    expect(report.byAssignment.has('a1')).toBe(false);
+    expect(primaryViolation(report, 'a2')?.code).toBe('avoidedWeekday');
   });
 
   it('non segnala i turni fissati, ma ne tiene conto per gli altri', () => {

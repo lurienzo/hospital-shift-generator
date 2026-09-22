@@ -34,7 +34,10 @@ const EMPTY_CONFIG = {
 };
 
 export function ScheduleGenerator({ onScheduleGenerated, preselected }: ScheduleGeneratorProps) {
-  const { rooms, doctors, shiftTypes, shiftTypeIndex, schemes, rotationRule, rotationScheme } = useConfig();
+  const {
+    rooms, doctors, shiftTypes, shiftTypeIndex, schemes,
+    rotationRule, rotationScheme, hoursTarget,
+  } = useConfig();
 
   const today = new Date();
   const [year, setYear] = useState(preselected?.year ?? today.getFullYear());
@@ -123,6 +126,7 @@ export function ScheduleGenerator({ onScheduleGenerated, preselected }: Schedule
       schemes,
       config,
       rotationRule,
+      hoursTarget,
       priorStats: useYearBalance ? priorYear?.stats : undefined,
       priorAssignments: previous?.schedule.assignments,
     });
@@ -357,6 +361,15 @@ export function ScheduleGenerator({ onScheduleGenerated, preselected }: Schedule
             {rotationRule.strength === 'binding'
               ? ' — vincolante nei giorni di smonto e riposo.'
               : ' — seguita quando possibile.'}
+          </p>
+        )}
+
+        {hoursTarget.enabled && (
+          <p className="hint">
+            Ore richieste: fra <strong>{hoursTarget.min}</strong> e{' '}
+            <strong>{hoursTarget.max}</strong> per{' '}
+            {hoursTarget.period === 'week' ? 'settimana' : 'mese'}. Il massimo non viene
+            superato; sotto il minimo il generatore dà la precedenza a chi è più scoperto.
           </p>
         )}
 
