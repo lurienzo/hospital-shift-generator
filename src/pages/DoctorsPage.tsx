@@ -5,7 +5,7 @@ import type { Doctor, RuleLevel, ServiceConfig, WeekdayRule } from '../domain/ty
 import { notify, updateConfig, useStore } from '../store/store';
 import { IconPlus, IconTrash } from '../ui/icons';
 import { ColorInput, Modal, NumberInput, Switch, TextInput } from '../ui/kit';
-import { textOn } from '../ui/color';
+import { distinctColors, textOn } from '../ui/color';
 import { useConfirm } from '../ui/useConfirm';
 import { Topbar } from '../ui/Topbar';
 
@@ -24,6 +24,18 @@ function addDoctors(names: string[]) {
     }
     return { ...c, doctors };
   });
+}
+
+/** Ricolora tutti i medici con colori ben distinti; ogni volta una combinazione diversa. */
+function mixColors() {
+  updateConfig(c => {
+    // Prima gli attivi, nell'ordine dell'elenco: sono le colonne del calendario.
+    const order = [...c.doctors.filter(d => d.active), ...c.doctors.filter(d => !d.active)];
+    const colors = distinctColors(order.length, Math.random());
+    const byId = new Map(order.map((d, i) => [d.id, colors[i]]));
+    return { ...c, doctors: c.doctors.map(d => ({ ...d, color: byId.get(d.id) ?? d.color })) };
+  });
+  notify('Colori rimescolati: premi di nuovo per un’altra combinazione');
 }
 
 function doctorBadges(d: Doctor, config: ServiceConfig): { text: string; tone?: string }[] {
@@ -57,6 +69,9 @@ export function DoctorsPage() {
   return (
     <>
       <Topbar title="Medici">
+        {config.doctors.length > 1 && (
+          <button className="btn" onClick={mixColors} title="Assegna a tutti colori ben distinti fra loro; ogni clic dà una combinazione diversa">Mescola colori</button>
+        )}
         <button className="btn" onClick={() => setBulk('')}>Incolla elenco</button>
       </Topbar>
       <div className="content narrow">
