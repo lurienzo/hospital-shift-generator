@@ -1,4 +1,5 @@
-// Lettura di una griglia medici x giorni (da Excel, CSV o appunti).
+// Lettura di una griglia medici x giorni (da Excel, CSV o appunti), in
+// entrambi i versi: medici in righe e giorni in colonne, o il contrario.
 // Funzioni pure, senza dipendenze dal browser: testabili.
 
 import { daysInMonth, toIso } from '../domain/dates';
@@ -76,7 +77,21 @@ function findHeader(rows: Cell[][]): { row: number; columns: Map<number, number>
   return null;
 }
 
+/** Scambia righe e colonne (le righe corte si allungano con celle vuote). */
+export function transpose(rows: Cell[][]): Cell[][] {
+  const width = Math.max(0, ...rows.map(r => r.length));
+  return Array.from({ length: width }, (_, c) => rows.map(r => r[c] ?? null));
+}
+
+/**
+ * Legge la griglia in qualunque verso: se nessuna riga contiene i giorni
+ * 1, 2, 3… li cerca in una colonna (giorni in righe, medici in colonne).
+ */
 export function parseRequestGrid(rows: Cell[][], doctors: Doctor[], year: number, month: number): GridImport {
+  return findHeader(rows) ? parseDoctorRows(rows, doctors, year, month) : parseDoctorRows(transpose(rows), doctors, year, month);
+}
+
+function parseDoctorRows(rows: Cell[][], doctors: Doctor[], year: number, month: number): GridImport {
   const header = findHeader(rows);
   const result: GridImport = { requests: {}, matched: [], unknownNames: [], invalid: [], days: 0 };
   if (!header) return result;

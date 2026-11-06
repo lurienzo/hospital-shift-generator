@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { addDays, formatDay, parseIso, toIso, WEEKDAY_LETTER, weekdayOf } from '../domain/dates';
-import { REQUEST_CODES, REQUEST_INFO, type MonthData, type RequestCode } from '../domain/types';
-import { downloadRequestsTemplate, readRequestsFile } from '../io/excel';
+import { addDays, formatDay, parseIso, toIso, WEEKDAY_LETTER, WEEKDAY_SHORT, weekdayOf } from '../domain/dates';
+import { REQUEST_CODES, REQUEST_INFO, type Doctor, type MonthData, type RequestCode } from '../domain/types';
+import { downloadRequestsTemplate, readRequestsFile, type RequestsLayout } from '../io/excel';
 import { parseDelimited, parseRequestGrid, type GridImport } from '../io/requestsGrid';
 import { useMonthView } from '../store/month';
-import { notify, updateMonth, useStore } from '../store/store';
-import { IconClipboard, IconDownload, IconEraser, IconUpload } from '../ui/icons';
-import { Modal, Seg } from '../ui/kit';
+import { notify, setUi, updateMonth, useStore } from '../store/store';
+import { IconChevronDown, IconClipboard, IconDownload, IconEraser, IconUpload } from '../ui/icons';
+import { Modal, Popover, Seg } from '../ui/kit';
 import { useConfirm } from '../ui/useConfirm';
 import { Topbar } from '../ui/Topbar';
 
@@ -24,6 +24,8 @@ function paintRange(key: string, doctorId: string, from: string, to: string, b: 
   });
 }
 
+const holidayTitle = (hol?: string) => (hol ? `${hol} — clicca per togliere` : 'Clicca per segnare come festivo');
+
 const BRUSH_KEYS: Record<string, Brush> = { f: 'F', a: 'A', d: 'D', n: 'N', e: 'erase', '0': 'erase' };
 
 export function RequestsPage() {
@@ -32,6 +34,8 @@ export function RequestsPage() {
   const activeId = useStore(s => s.activeId);
   const serviceName = services.find(s => s.id === activeId)?.name ?? 'servizio';
   const { ctx, data, key } = view;
+  const layout = useStore(s => s.ui.requestsLayout);
+  const [templateAnchor, setTemplateAnchor] = useState<DOMRect | null>(null);
   const [brush, setBrush] = useState<Brush>('F');
   const [drag, setDrag] = useState<Drag | null>(null);
   // Lo stato del trascinamento vive anche in un riferimento: il rilascio del
@@ -115,7 +119,7 @@ export function RequestsPage() {
   const onFile = async (file: File) => {
     try {
       const r = await readRequestsFile(file, doctors, view.year, view.month);
-      if (r.days === 0) { notify('Non trovo la riga con i giorni del mese (1, 2, 3…) nel file.', 'error'); return; }
+      if (r.days === 0) { notify('Non trovo i giorni del mese (1, 2, 3…) nel file, né in una riga né in una colonna.', 'error'); return; }
       setImportResult({ ...r, source: file.name });
     } catch (e) {
       console.error(e);
@@ -129,12 +133,28 @@ export function RequestsPage() {
     for (const d of dates) { const c = req[d]; if (c) out[c]++; }
     return out;
   };
+  const cell = (doc: Doctor, d: string) => {
+    const code = data.requests[doc.id]?.[d];
+    const preview = inDrag(doc.id, d);
+    const shown = preview ? (brush === 'erase' ? null : brush) : code;
+    return (
+      <td key={`${doc.id}|${d}`} className={ctx.holidays.has(d) ? 'hol' : weekdayOf(d) >= 5 ? 'we' : ''}>
+        <div className="req-cell" style={preview ? { opacity: 0.75 } : undefined}
+          onMouseDown={e => { e.preventDefault(); startDrag(doc.id, d); }}
+          onMouseEnter={() => extendDrag(doc.id, d)}
+          title={`${doc.name} · ${formatDay(d)}${code ? ` · ${REQUEST_INFO[code].label}` : ''}`}>
+          {shown && <span className={`req-tag ${shown}`}>{shown}</span>}
+        </div>
+      </td>
+    );
+  };
+  const downloadTemplate = (l: RequestsLayout) => { setTemplateAnchor(null); downloadRequestsTemplate(ctx, data, serviceName, l); };
   const anyRequests = Object.values(data.requests).some(r => Object.keys(r).length > 0);
 
   return (
     <>
       <Topbar title="Ferie e desiderate" month>
-        <button className="btn" onClick={() => downloadRequestsTemplate(ctx, data, serviceName)}><IconDownload size={16} /> Template Excel</button>
+        <button className="btn" onClick={e => setTemplateAnchor(e.currentTarget.getBoundingClientRect())}><IconDownload size={16} /> Template Excel <IconChevronDown size={14} /></button>
         <button className="btn" onClick={() => fileRef.current?.click()}><IconUpload size={16} /> Importa</button>
         <button className="btn" onClick={() => setPaste('')}><IconClipboard size={16} /> Incolla</button>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.tsv,.txt" hidden onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ''; }} />
@@ -153,64 +173,88 @@ export function RequestsPage() {
               </button>
             </div>
             <div className="spacer" />
+            <Seg value={layout} onChange={v => setUi({ requestsLayout: v })}
+              options={[{ value: 'doctor-rows', label: 'Medici in righe' }, { value: 'doctor-cols', label: 'Medici in colonne' }]} />
             <button className="btn" onClick={() => setRangeOpen(true)}>Inserisci periodo…</button>
             {anyRequests && <button className="btn ghost danger" onClick={() => confirm({
               title: 'Svuotare le richieste del mese?', message: 'Tutte le ferie, assenze e desiderate di questo mese verranno tolte.', confirmLabel: 'Svuota', danger: true,
               onConfirm: () => updateMonth(key, m => ({ ...m, requests: {} })),
             })}>Svuota mese</button>}
           </div>
-          <p className="hint">Scegli il pennello e <b>clicca o trascina</b> sulle caselle per riempire più giorni insieme. Clicca un numero di giorno per segnarlo (o toglierlo) come <b>festivo</b>. <b>F</b> e <b>A</b> sono vincoli assoluti, <b>D</b> e <b>N</b> vengono rispettate se possibile.</p>
+          <p className="hint">Scegli il pennello e <b>clicca o trascina</b> sulle caselle per riempire più giorni insieme. Clicca un giorno per segnarlo (o toglierlo) come <b>festivo</b>. <b>F</b> e <b>A</b> sono vincoli assoluti, <b>D</b> e <b>N</b> vengono rispettate se possibile.</p>
         </div>
 
         {doctors.length === 0 ? <div className="card empty"><p>Aggiungi prima i medici.</p></div> : (
           <div className="card">
             <div className="cal-wrap">
-              <table className="cal">
-                <thead>
-                  <tr>
-                    <th className="name-col">Medico</th>
-                    {dates.map(d => {
-                      const wd = weekdayOf(d);
-                      const hol = ctx.holidays.get(d);
+              {layout === 'doctor-rows' ? (
+                <table className="cal">
+                  <thead>
+                    <tr>
+                      <th className="name-col">Medico</th>
+                      {dates.map(d => {
+                        const wd = weekdayOf(d);
+                        const hol = ctx.holidays.get(d);
+                        return (
+                          <th key={d} className={`${hol ? 'hol' : wd >= 5 ? 'we' : ''}`} style={{ cursor: 'pointer', minWidth: 32 }}
+                            title={holidayTitle(hol)} onClick={() => toggleHoliday(d)}>
+                            <span className="d">{parseIso(d).day}</span><span className="w">{WEEKDAY_LETTER[wd]}</span>
+                          </th>
+                        );
+                      })}
+                      {REQUEST_CODES.map((c, i) => <th key={c} className={`sum ${i === 0 ? 'sum-first' : ''}`} title={REQUEST_INFO[c].label}>{c}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {doctors.map(doc => {
+                      const t = totals(doc.id);
                       return (
-                        <th key={d} className={`${hol ? 'hol' : wd >= 5 ? 'we' : ''}`} style={{ cursor: 'pointer', minWidth: 32 }}
-                          title={hol ? `${hol} — clicca per togliere` : 'Clicca per segnare come festivo'} onClick={() => toggleHoliday(d)}>
-                          <span className="d">{parseIso(d).day}</span><span className="w">{WEEKDAY_LETTER[wd]}</span>
-                        </th>
+                        <tr key={doc.id}>
+                          <td className="name-col"><div className="doc-name"><span className="color-dot" style={{ background: doc.color }} />{doc.name}</div></td>
+                          {dates.map(d => cell(doc, d))}
+                          {REQUEST_CODES.map((c, i) => <td key={c} className={`sum ${i === 0 ? 'sum-first' : ''}`}>{t[c] || ''}</td>)}
+                        </tr>
                       );
                     })}
-                    {REQUEST_CODES.map((c, i) => <th key={c} className={`sum ${i === 0 ? 'sum-first' : ''}`} title={REQUEST_INFO[c].label}>{c}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {doctors.map(doc => {
-                    const req = data.requests[doc.id] ?? {};
-                    const t = totals(doc.id);
-                    return (
-                      <tr key={doc.id}>
-                        <td className="name-col"><div className="doc-name"><span className="color-dot" style={{ background: doc.color }} />{doc.name}</div></td>
-                        {dates.map(d => {
-                          const wd = weekdayOf(d);
-                          const code = req[d];
-                          const preview = inDrag(doc.id, d);
-                          const shown = preview ? (brush === 'erase' ? null : brush) : code;
-                          return (
-                            <td key={d} className={ctx.holidays.has(d) ? 'hol' : wd >= 5 ? 'we' : ''}>
-                              <div className="req-cell" style={preview ? { opacity: 0.75 } : undefined}
-                                onMouseDown={e => { e.preventDefault(); startDrag(doc.id, d); }}
-                                onMouseEnter={() => extendDrag(doc.id, d)}
-                                title={`${doc.name} · ${formatDay(d)}${code ? ` · ${REQUEST_INFO[code].label}` : ''}`}>
-                                {shown && <span className={`req-tag ${shown}`}>{shown}</span>}
-                              </div>
-                            </td>
-                          );
-                        })}
-                        {REQUEST_CODES.map((c, i) => <td key={c} className={`sum ${i === 0 ? 'sum-first' : ''}`}>{t[c] || ''}</td>)}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="cal rows">
+                  <thead>
+                    <tr>
+                      <th className="name-col day-col">Giorno</th>
+                      {doctors.map(doc => (
+                        <th key={doc.id} className="doc-head" style={{ borderTop: `3px solid ${doc.color}` }} title={doc.name}>{doc.name}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dates.map(d => {
+                      const hol = ctx.holidays.get(d);
+                      return (
+                        <tr key={d}>
+                          <td className={`name-col day-col ${hol ? 'hol' : weekdayOf(d) >= 5 ? 'we' : ''}`} style={{ cursor: 'pointer' }}
+                            title={holidayTitle(hol)} onClick={() => toggleHoliday(d)}>
+                            <div className="day-label">
+                              <b className="num">{parseIso(d).day}</b><span>{WEEKDAY_SHORT[weekdayOf(d)]}</span>
+                              {hol && <span className="hol-name">{hol}</span>}
+                            </div>
+                          </td>
+                          {doctors.map(doc => cell(doc, d))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    {REQUEST_CODES.map((c, i) => (
+                      <tr key={c} className={i === 0 ? 'first-sum' : ''}>
+                        <td className="name-col day-col" title={REQUEST_INFO[c].hint}><span className={`req-tag ${c}`}>{c}</span> {REQUEST_INFO[c].label}</td>
+                        {doctors.map(doc => <td key={doc.id} className="sum">{totals(doc.id)[c] || ''}</td>)}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    ))}
+                  </tfoot>
+                </table>
+              )}
             </div>
           </div>
         )}
@@ -220,16 +264,25 @@ export function RequestsPage() {
         </div>
       </div>
 
+      {templateAnchor && (
+        <Popover anchor={templateAnchor} onClose={() => setTemplateAnchor(null)}>
+          <div className="pop-label">Scarica il template</div>
+          <button className="pop-item" onClick={() => downloadTemplate('doctor-rows')}>Medici in righe <span className="why">giorni in colonne</span></button>
+          <button className="pop-item" onClick={() => downloadTemplate('doctor-cols')}>Medici in colonne <span className="why">giorni in righe</span></button>
+          <div className="pop-sub">Si reimportano entrambi con “Importa”.</div>
+        </Popover>
+      )}
+
       {rangeOpen && <RangeDialog data={data} doctors={doctors} dates={dates} onClose={() => setRangeOpen(false)} onApply={(docId, from, to, code) => { paint(docId, from, to, code); setRangeOpen(false); notify('Periodo inserito'); }} />}
 
       {paste !== null && (
-        <Modal wide title="Incolla da Excel" subtitle="Copia in Excel la tabella con la riga dei giorni (1, 2, 3…) e i nomi dei medici nella prima colonna, poi incollala qui."
+        <Modal wide title="Incolla da Excel" subtitle="Copia in Excel la tabella con i giorni (1, 2, 3…) e i nomi dei medici, in un verso o nell’altro: giorni nella prima riga e medici nella prima colonna, o il contrario. Poi incollala qui."
           onClose={() => setPaste(null)}
           footer={<>
             <button className="btn" onClick={() => setPaste(null)}>Annulla</button>
             <button className="btn primary" disabled={!paste.trim()} onClick={() => {
               const r = parseRequestGrid(parseDelimited(paste), doctors, view.year, view.month);
-              if (r.days === 0) { notify('Non trovo la riga con i giorni (1, 2, 3…).', 'error'); return; }
+              if (r.days === 0) { notify('Non trovo i giorni (1, 2, 3…), né in una riga né in una colonna.', 'error'); return; }
               setPaste(null);
               setImportResult({ ...r, source: 'testo incollato' });
             }}>Continua</button>

@@ -41,4 +41,18 @@ describe('import richieste', () => {
     const r = parseRequestGrid(parseDelimited(csv), doctors, 2026, 2);
     expect(r.requests[doctors[0].id]).toEqual({ '2026-02-02': 'F', '2026-02-03': 'F' });
   });
+
+  it('legge anche la griglia con i giorni in righe e i medici in colonne', () => {
+    const days = Array.from({ length: 30 }, (_, i) => i + 1);
+    const lines = [
+      ['Giorno', 'Novembre 2026', 'Rossi', 'Neri', 'Bianchi'].join('\t'),
+      ...days.map(d => [String(d), ['Dom', 'Lun', 'Mar'][(d - 1) % 3], d <= 2 ? 'F' : d === 4 ? 'D' : '', d === 1 ? 'F' : '', d === 3 ? 'N' : d === 2 ? 'boh' : ''].join('\t')),
+    ];
+    const r = parseRequestGrid(parseDelimited(lines.join('\n')), doctors, 2026, 11);
+    expect(r.days).toBe(30);
+    expect(r.requests[doctors[0].id]).toEqual({ '2026-11-01': 'F', '2026-11-02': 'F', '2026-11-04': 'D' });
+    expect(r.requests[doctors[1].id]).toEqual({ '2026-11-03': 'N' });
+    expect(r.unknownNames).toEqual(['Neri']);
+    expect(r.invalid).toEqual([{ name: 'Bianchi', day: 2, value: 'boh' }]);
+  });
 });

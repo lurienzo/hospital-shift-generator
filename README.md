@@ -50,7 +50,7 @@ giorni della settimana da evitare o vietati (anche per singolo turno), ore
 settimanali proprie (part-time), massimo di notti al mese, data di ingresso.
 
 **Ferie e desiderate.** Griglia medici × giorni del mese, compilata a pennello
-(clic o trascinamento):
+(clic o trascinamento), con i medici in righe o in colonne a scelta:
 
 | Sigla | Significato | Trattamento |
 |---|---|---|
@@ -62,8 +62,8 @@ settimanali proprie (part-time), massimo di notti al mese, data di ingresso.
 Con *Proteggi le desiderate* (predefinito) un turno non critico resta scoperto
 piuttosto che violare una desiderata. Le richieste si importano anche da file:
 *Template Excel* scarica la griglia del mese già intestata con medici e giorni,
-la si compila e la si reimporta (.xlsx o .csv), oppure si incolla direttamente
-da Excel. I nomi vengono riconosciuti ignorando titoli e maiuscole, e prima di
+in uno dei due versi, la si compila e la si reimporta (.xlsx o .csv), oppure si
+incolla direttamente da Excel. Il verso del file si riconosce da solo. I nomi vengono riconosciuti ignorando titoli e maiuscole, e prima di
 importare si vede un riepilogo di cosa verrà inserito.
 
 **Festivi.** Nazionali italiani automatici (Pasqua e Pasquetta calcolate, 4

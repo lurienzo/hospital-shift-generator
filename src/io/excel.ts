@@ -34,33 +34,50 @@ function dayHeader(ctx: Pick<MonthContext, 'holidays'>, dates: string[]): { days
   return { days, weekdays };
 }
 
-export async function downloadRequestsTemplate(ctx: MonthContext, data: MonthData, serviceName: string) {
+/** Verso della griglia richieste: medici in righe (giorni in colonne) o il contrario. */
+export type RequestsLayout = 'doctor-rows' | 'doctor-cols';
+
+export async function downloadRequestsTemplate(ctx: MonthContext, data: MonthData, serviceName: string, layout: RequestsLayout = 'doctor-rows') {
   const dates = ctx.dates;
+  const dayBg = (d: string) => (ctx.holidays.has(d) || weekdayOf(d) >= 5 ? WEEKEND_BG : undefined);
+  const code = (docId: string, d: string): XCell => ({ value: data.requests[docId]?.[d] ?? null, align: 'center', type: String, backgroundColor: dayBg(d) });
+  let rows: XCell[][];
+  let columns: { width: number }[];
+  let sticky: { stickyRowsCount: number; stickyColumnsCount: number };
   const { days, weekdays } = dayHeader(ctx, dates);
-  const rows: XCell[][] = [
-    [{ value: 'Medico', fontWeight: 'bold', backgroundColor: HEADER_BG }, ...days],
-    [{ value: monthLabel(ctx.year, ctx.month), fontSize: 9, backgroundColor: HEADER_BG }, ...weekdays],
-  ];
-  for (const doc of ctx.doctors) {
-    const req = data.requests[doc.id] ?? {};
-    rows.push([
-      { value: doc.name, fontWeight: 'bold' },
-      ...dates.map(d => ({ value: req[d] ?? null, align: 'center' as const, type: String, backgroundColor: ctx.holidays.has(d) || weekdayOf(d) >= 5 ? WEEKEND_BG : undefined })),
-    ]);
+  if (layout === 'doctor-rows') {
+    rows = [
+      [{ value: 'Medico', fontWeight: 'bold', backgroundColor: HEADER_BG }, ...days],
+      [{ value: monthLabel(ctx.year, ctx.month), fontSize: 9, backgroundColor: HEADER_BG }, ...weekdays],
+      ...ctx.doctors.map(doc => [{ value: doc.name, fontWeight: 'bold' }, ...dates.map(d => code(doc.id, d))] as XCell[]),
+    ];
+    columns = [{ width: 22 }, ...dates.map(() => ({ width: 4.5 }))];
+    sticky = { stickyRowsCount: 2, stickyColumnsCount: 1 };
+  } else {
+    // Giorni in righe: prima colonna il numero del giorno, poi il giorno della
+    // settimana, poi una colonna per medico.
+    rows = [
+      [{ value: 'Giorno', fontWeight: 'bold', backgroundColor: HEADER_BG }, { value: monthLabel(ctx.year, ctx.month), fontSize: 9, backgroundColor: HEADER_BG },
+        ...ctx.doctors.map(doc => ({ value: doc.name, fontWeight: 'bold', align: 'center', wrap: true, backgroundColor: HEADER_BG }) as XCell)],
+      ...dates.map((d, i) => [days[i], weekdays[i], ...ctx.doctors.map(doc => code(doc.id, d))]),
+    ];
+    columns = [{ width: 7 }, { width: 13 }, ...ctx.doctors.map(() => ({ width: 12 }))];
+    sticky = { stickyRowsCount: 1, stickyColumnsCount: 2 };
   }
   const legend: XCell[][] = [
     [{ value: 'Sigla', fontWeight: 'bold', backgroundColor: HEADER_BG }, { value: 'Significato', fontWeight: 'bold', backgroundColor: HEADER_BG }, { value: 'Come la tratta il generatore', fontWeight: 'bold', backgroundColor: HEADER_BG }],
     ...REQUEST_CODES.map(c => [c, REQUEST_INFO[c].label, REQUEST_INFO[c].hint] as XCell[]),
     [],
     ['Compila una sigla per cella e lascia vuoti i giorni senza richieste.'],
-    ['Non modificare la riga dei numeri dei giorni né i nomi dei medici.'],
+    ['Non modificare i numeri dei giorni né i nomi dei medici.'],
+    ['Il file si reimporta in entrambi i versi: medici in righe o in colonne.'],
     ['Sono accettate anche: FERIE, MAL, CONGRESSO (= A), X o LIBERO (= D), NN (= N).'],
     [`Servizio: ${serviceName} · ${monthLabel(ctx.year, ctx.month)}`],
   ];
   await save([
-    { data: rows, sheet: `Richieste ${ctx.key}`, columns: [{ width: 22 }, ...dates.map(() => ({ width: 4.5 }))], stickyRowsCount: 2, stickyColumnsCount: 1 },
+    { data: rows, sheet: `Richieste ${ctx.key}`, columns, ...sticky },
     { data: legend, sheet: 'Legenda', columns: [{ width: 8 }, { width: 16 }, { width: 60 }] },
-  ], `richieste-${slug(serviceName)}-${ctx.key}.xlsx`);
+  ], `richieste-${slug(serviceName)}-${ctx.key}${layout === 'doctor-cols' ? '-medici-in-colonne' : ''}.xlsx`);
 }
 
 export async function readRequestsFile(file: File, doctors: Doctor[], year: number, month: number): Promise<GridImport & { sheetMonth: string | null }> {

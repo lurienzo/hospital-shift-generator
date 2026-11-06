@@ -32,6 +32,8 @@ export interface UiState {
   colWidths: Record<string, number>;
   /** Vista per area: colonne Smonto e Riposo. */
   showOffCols: boolean;
+  /** Ferie e desiderate: medici in righe (giorni in colonne) o in colonne. */
+  requestsLayout: 'doctor-rows' | 'doctor-cols';
   theme: 'auto' | 'light' | 'dark';
 }
 
@@ -106,6 +108,7 @@ function initialUi(): UiState {
     calendarLayout: 'rows',
     colWidths: {},
     showOffCols: true,
+    requestsLayout: 'doctor-rows',
     theme: 'auto',
     ...saved,
   };
