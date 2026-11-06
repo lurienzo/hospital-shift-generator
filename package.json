@@ -1,7 +1,7 @@
 {
   "name": "hospital-shift-generator",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,12 +11,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "tsc --noEmit && eslint . && vitest run",
-    "smoke": "node tools/smoke.mjs",
     "hash-password": "node tools/hash-password.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "read-excel-file": "^9.3.14",
+    "write-excel-file": "^4.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -32,11 +33,10 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "jsdom": "^29.1.1",
-    "playwright": "^1.63.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.70.1",
     "vite": "^7.2.4",
     "vitest": "^5.0.1"
   },
-  "description": "Generatore di turni ospedalieri con servizi separati, fasce orarie configurabili e rotazioni."
+  "description": "Generatore di turni ospedalieri: turni configurabili, notti con smonto, critici, festivi automatici, ferie e desiderate importabili da Excel, equita cumulata."
 }
