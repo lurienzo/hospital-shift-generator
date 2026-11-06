@@ -38,12 +38,68 @@ const COLS: { key: keyof Omit<Tally, 'byShift' | 'byArea'>; label: string; title
   { key: 'critical', label: 'Critici', title: 'Turni critici' },
 ];
 
+type SortDir = 'asc' | 'desc';
+interface Sort { key: string; dir: SortDir }
+
+/**
+ * Ordinamento cliccando le intestazioni: il primo clic su un numero mette in
+ * cima chi ne ha di piu, il secondo inverte; sul nome si parte dalla A.
+ */
+function useSort(initial: Sort | null = null) {
+  const [sort, setSort] = useState<Sort | null>(initial);
+  const toggle = (key: string, firstDir: SortDir = 'desc') =>
+    setSort(s => (s?.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: firstDir }));
+  const apply = <T,>(rows: T[], value: (row: T, key: string) => number | string): T[] => {
+    if (!sort) return rows;
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const x = value(a, sort.key), y = value(b, sort.key);
+      const c = typeof x === 'string' || typeof y === 'string' ? String(x).localeCompare(String(y), 'it') : x - y;
+      return c * sign;
+    });
+  };
+  return { sort, toggle, apply };
+}
+
+function SortTh({ k, sort, onSort, className, title, firstDir, children }: {
+  k: string; sort: Sort | null; onSort: (key: string, firstDir?: SortDir) => void;
+  className?: string; title?: string; firstDir?: SortDir; children: React.ReactNode;
+}) {
+  const on = sort?.key === k;
+  return (
+    <th className={`${className ?? ''} sortable ${on ? 'sorted' : ''}`} title={title ? `${title} · clicca per ordinare` : 'Clicca per ordinare'}
+      aria-sort={on ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button type="button" className="th-sort" onClick={() => onSort(k, firstDir)}>
+        <span className="th-label">{children}</span><span className="sort-arrow" aria-hidden>{on ? (sort!.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+      </button>
+    </th>
+  );
+}
+
+/** Valore di una riga per una colonna ordinabile. */
+function rowValue(r: Row, key: string): number | string {
+  if (key === 'name') return r.name;
+  if (key.startsWith('block:')) { const b = r.blocks[key.slice(6)]; return b ? b.weeks.size * 1000 + b.days : 0; }
+  if (key.startsWith('shift:')) return r.tally.byShift[key.slice(6)] ?? 0;
+  if (key.startsWith('area:')) return r.tally.byArea[key.slice(5)] ?? 0;
+  switch (key) {
+    case 'riposi': return r.riposi;
+    case 'ferie': return r.ferie;
+    case 'assenze': return r.assenze;
+    // Desiderate e no notte: prima chi ne ha avute di piu non rispettate.
+    case 'des': return (r.desTot - r.desOk) * 1000 + r.desTot;
+    case 'nn': return (r.nnTot - r.nnOk) * 1000 + r.nnTot;
+    default: return (r.tally as unknown as Record<string, number>)[key] ?? 0;
+  }
+}
+
 export function StatsPage() {
   const view = useMonthView();
   const config = useStore(s => s.config)!;
   const months = useStore(s => s.months);
   const [scope, setScope] = useState<Scope>('month');
   const [showDelta, setShowDelta] = useState(true);
+  const { sort, toggle, apply } = useSort();
   const allKeys = useMemo(() => {
     const set = new Set(Object.entries(months).filter(([, m]) => m.activeVersionId).map(([k]) => k));
     if (view.version) set.add(view.key);
@@ -142,18 +198,18 @@ export function StatsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Medico</th>
-                    {COLS.map(c => <th key={c.key} className="r" title={c.title}>{c.label}</th>)}
-                    {blockShifts.map(s => <th key={s.id} className="r" title={`${s.name}: settimane e giorni`}>{s.name}<span className="tiny muted" style={{ display: 'block', fontWeight: 500 }}>sett. · giorni</span></th>)}
-                    <th className="r" title="Riposi post-notte saltati">Riposi saltati</th>
-                    <th className="r" title="Giorni di ferie inseriti">Ferie</th>
-                    <th className="r" title="Giorni di altre assenze inseriti">Assenze</th>
-                    <th className="r" title="Desiderate rispettate / inserite">Desiderate</th>
-                    <th className="r" title="No notte rispettate / inserite">No notte</th>
+                    <SortTh k="name" sort={sort} onSort={toggle} firstDir="asc">Medico</SortTh>
+                    {COLS.map(c => <SortTh key={c.key} k={c.key} sort={sort} onSort={toggle} className="r" title={c.title}>{c.label}</SortTh>)}
+                    {blockShifts.map(s => <SortTh key={s.id} k={`block:${s.id}`} sort={sort} onSort={toggle} className="r" title={`${s.name}: settimane e giorni`}>{s.name}<span className="tiny muted" style={{ display: 'block', fontWeight: 500 }}>sett. · giorni</span></SortTh>)}
+                    <SortTh k="riposi" sort={sort} onSort={toggle} className="r" title="Riposi post-notte saltati">Riposi saltati</SortTh>
+                    <SortTh k="ferie" sort={sort} onSort={toggle} className="r" title="Giorni di ferie inseriti">Ferie</SortTh>
+                    <SortTh k="assenze" sort={sort} onSort={toggle} className="r" title="Giorni di altre assenze inseriti">Assenze</SortTh>
+                    <SortTh k="des" sort={sort} onSort={toggle} className="r" title="Desiderate rispettate / inserite (prima chi ne ha più non rispettate)">Desiderate</SortTh>
+                    <SortTh k="nn" sort={sort} onSort={toggle} className="r" title="No notte rispettate / inserite (prima chi ne ha più non rispettate)">No notte</SortTh>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(r => (
+                  {apply(rows, rowValue).map(r => (
                     <tr key={r.doctorId}>
                       <td><div className="row"><span className="color-dot" style={{ background: r.color }} /><b>{r.name}</b></div></td>
                       {COLS.map(c => {
@@ -217,6 +273,7 @@ export function StatsPage() {
 function BreakdownCard({ rows }: { rows: Row[] }) {
   const config = useStore(s => s.config)!;
   const [by, setBy] = useState<'shift' | 'area'>('shift');
+  const { sort, toggle, apply } = useSort();
   const cols = by === 'shift' ? config.shiftTypes.map(s => ({ id: s.id, label: s.name, color: s.color })) : config.areas.map(a => ({ id: a.id, label: a.name, color: a.color }));
   return (
     <section className="card">
@@ -227,9 +284,18 @@ function BreakdownCard({ rows }: { rows: Row[] }) {
       </div>
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Medico</th>{cols.map(c => <th key={c.id} className="r"><span className="row" style={{ justifyContent: 'flex-end' }}><span className="color-dot" style={{ background: c.color }} />{c.label}</span></th>)}</tr></thead>
+          <thead>
+            <tr>
+              <SortTh k="name" sort={sort} onSort={toggle} firstDir="asc">Medico</SortTh>
+              {cols.map(c => (
+                <SortTh key={c.id} k={`${by}:${c.id}`} sort={sort} onSort={toggle} className="r">
+                  <span className="color-dot" style={{ background: c.color }} />{c.label}
+                </SortTh>
+              ))}
+            </tr>
+          </thead>
           <tbody>
-            {rows.map(r => (
+            {apply(rows, rowValue).map(r => (
               <tr key={r.doctorId}>
                 <td>{r.name}</td>
                 {cols.map(c => {
