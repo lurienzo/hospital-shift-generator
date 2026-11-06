@@ -7,10 +7,14 @@
 //    equita) cresce di meno. Le violazioni rigide escludono il medico; un
 //    turno critico puo forzare solo quelle "forzabili" (doppio turno non
 //    sovrapposto, tetto ore, rotazione vincolante), mai ferie o smonto.
+//    Con uno schema di rotazione, i turni che lo schema mette in giorni
+//    consecutivi (es. lunga e poi notte) si assegnano insieme come una
+//    catena allo stesso medico.
 // 4. Si ripete con ordini e rumori diversi e si tiene il migliore.
-// 5. Una ricerca locale (spostamenti e scambi) rifinisce il risultato.
+// 5. Una ricerca locale (spostamenti e scambi, a catene intere) rifinisce il
+//    risultato.
 
-import { blockStart, COST, evaluateDoctor, groupByDoctor, type DoctorEval } from './analysis';
+import { blockStart, COST, evaluateDoctor, groupByDoctor, schemePositions, schemeShiftAt, type DoctorEval } from './analysis';
 import { demandKey, type MonthContext, type Slot } from './context';
 import { addDays } from './dates';
 import { uid } from './defaults';
@@ -68,16 +72,23 @@ class State {
     return (this.filled.get(demandKey(slot.date, slot.areaId, slot.shiftId)) ?? 0) > slot.index;
   }
 
-  /** Valuta il medico con un'assegnazione in piu (senza applicarla). */
-  tryAdd(doc: Doctor, a: Assignment): DoctorEval {
-    return evaluateDoctor(this.ctx, doc, [...this.byDoc.get(doc.id)!, a]);
+  /** Valuta il medico con delle assegnazioni in piu (senza applicarle). */
+  tryAdd(doc: Doctor, adds: Assignment[]): DoctorEval {
+    return evaluateDoctor(this.ctx, doc, [...this.byDoc.get(doc.id)!, ...adds]);
   }
 
-  add(doc: Doctor, a: Assignment, ev?: DoctorEval) {
+  add(doc: Doctor, adds: Assignment[], ev?: DoctorEval) {
     const list = this.byDoc.get(doc.id)!;
-    list.push(a);
-    this.bump(a, 1);
+    for (const a of adds) { list.push(a); this.bump(a, 1); }
     this.evals.set(doc.id, ev ?? evaluateDoctor(this.ctx, doc, list));
+  }
+
+  /** Sostituisce i turni di un medico, aggiornando i conteggi dei posti. */
+  replace(docId: string, list: Assignment[], ev: DoctorEval) {
+    for (const a of this.byDoc.get(docId)!) this.bump(a, -1);
+    for (const a of list) this.bump(a, 1);
+    this.byDoc.set(docId, list);
+    this.evals.set(docId, ev);
   }
 
   all(): Assignment[] {
@@ -110,6 +121,67 @@ function feasible(before: DoctorEval, after: DoctorEval, critical: boolean): boo
 
 function makeAssignment(slot: Pick<Slot, 'date' | 'areaId' | 'shiftId'>, doctorId: string): Assignment {
   return { id: uid('x'), date: slot.date, areaId: slot.areaId, shiftId: slot.shiftId, doctorId };
+}
+
+/**
+ * Catena di posti a partire da un posto: se lo schema mette dopo quel turno
+ * altri turni nei giorni successivi (es. lunga -> notte), aggiunge per ogni
+ * giorno un posto libero di quel turno, preferendo la stessa area o l'area
+ * che la segue nell'ordine (es. "Lunga" -> "Notte", "SEI Lunga" -> "SEI notte").
+ * Se un anello manca, la catena si ferma: l'analisi decidera se e ammesso.
+ */
+function chainFrom(ctx: MonthContext, state: State, slot: Slot, slotsByDate: Map<string, Slot[]>): Slot[] {
+  const steps = ctx.scheme;
+  if (!steps) return [slot];
+  const start = schemePositions(steps, slot.shiftId).find(p => !schemeShiftAt(steps, p - 1));
+  if (start === undefined) return [slot];
+  const areaIndex = new Map(ctx.config.areas.map((a, i) => [a.id, i]));
+  const n = ctx.config.areas.length;
+  const chain = [slot];
+  const taken = new Set<Slot>();
+  let date = slot.date;
+  let fromArea = slot.areaId;
+  for (let k = 1; ; k++) {
+    const shiftId = schemeShiftAt(steps, start + k);
+    if (!shiftId) break;
+    date = addDays(date, 1);
+    const open = (slotsByDate.get(date) ?? []).filter(s => s.shiftId === shiftId && !taken.has(s) && !state.isFilled(s) && !s.optional);
+    if (open.length === 0) break;
+    const dist = (s: Slot) => s.areaId === fromArea ? -1 : ((areaIndex.get(s.areaId) ?? 0) - (areaIndex.get(fromArea) ?? 0) + n) % n;
+    // Il primo posto libero per area: gli indici piu bassi si riempiono prima.
+    const next = open.sort((a, b) => dist(a) - dist(b) || a.index - b.index)[0];
+    taken.add(next);
+    chain.push(next);
+    fromArea = next.areaId;
+  }
+  return chain;
+}
+
+/** Turni dello stesso medico che formano una catena dello schema con a. */
+function chainOf(ctx: MonthContext, list: readonly Assignment[], a: Assignment): Assignment[] {
+  const steps = ctx.scheme;
+  if (!steps) return [a];
+  const at = (date: string, shiftId: string) => list.find(x => x.date === date && x.shiftId === shiftId);
+  let best: Assignment[] = [a];
+  for (const p of schemePositions(steps, a.shiftId)) {
+    const group = [a];
+    for (let k = 1, date = a.date; ; k++) {
+      const id = schemeShiftAt(steps, p - k);
+      date = addDays(date, -1);
+      const x = id && ctx.dateSet.has(date) ? at(date, id) : undefined;
+      if (!x) break;
+      group.unshift(x);
+    }
+    for (let k = 1, date = a.date; ; k++) {
+      const id = schemeShiftAt(steps, p + k);
+      date = addDays(date, 1);
+      const x = id && ctx.dateSet.has(date) ? at(date, id) : undefined;
+      if (!x) break;
+      group.push(x);
+    }
+    if (group.length > best.length) best = group;
+  }
+  return best;
 }
 
 function assignBlocks(ctx: MonthContext, state: State, random: () => number) {
@@ -156,7 +228,7 @@ function assignBlocks(ctx: MonthContext, state: State, random: () => number) {
         if (!best || cost < best.cost) best = { doc, cost, take };
       }
       if (!best) continue;
-      for (const s of best.take) state.add(best.doc, makeAssignment(s, best.doc.id));
+      state.add(best.doc, best.take.map(s => makeAssignment(s, best.doc.id)));
     }
   }
 }
@@ -175,45 +247,49 @@ function greedy(ctx: MonthContext, locked: Assignment[], random: () => number, n
 
     for (const slot of order) {
       if (state.isFilled(slot)) continue;
-      let best: { doc: Doctor; cost: number; ev: DoctorEval; a: Assignment } | null = null;
+      const chain = chainFrom(ctx, state, slot, byDate);
+      const critical = chain.some(s => s.critical);
+      let best: { doc: Doctor; cost: number; ev: DoctorEval; adds: Assignment[] } | null = null;
       for (const doc of ctx.doctors) {
         const before = state.evals.get(doc.id)!;
-        const a = makeAssignment(slot, doc.id);
-        const after = state.tryAdd(doc, a);
-        if (!feasible(before, after, slot.critical)) continue;
+        const adds = (doc.inRotation ? chain : [slot]).map(s => makeAssignment(s, doc.id));
+        const after = state.tryAdd(doc, adds);
+        if (!feasible(before, after, critical)) continue;
         // Un turno opzionale va solo a chi ci guadagna (es. chi e sotto carico).
         if (slot.optional && after.total - before.total >= 0) continue;
         const cost = after.total - before.total + (random() - 0.5) * noise;
-        if (!best || cost < best.cost) best = { doc, cost, ev: after, a };
+        if (!best || cost < best.cost) best = { doc, cost, ev: after, adds };
       }
-      if (best) state.add(best.doc, best.a, best.ev);
+      if (best) state.add(best.doc, best.adds, best.ev);
     }
   }
   return state;
 }
 
-/** Ricerca locale: spostamenti, scambi e riempimento dei buchi. */
+/** Ricerca locale: spostamenti, scambi e riempimento dei buchi, a catene intere. */
 function improve(ctx: MonthContext, state: State, random: () => number, deadline: number, onProgress?: (p: number) => void, progressStart = 0.45) {
   const docs = ctx.doctors;
   if (docs.length < 2) return;
-  const lockedIds = new Set<string>();
   // I blocchi di diurnismo si muovono solo interi: qui restano fermi.
-  const movable = () => state.all().filter(a => !a.locked && !lockedIds.has(a.id) && !ctx.shifts.get(a.shiftId)?.isBlock);
+  const isMovable = (a: Assignment) => !a.locked && !ctx.shifts.get(a.shiftId)?.isBlock;
+  const movable = () => state.all().filter(isMovable);
   let pool = movable();
   let iter = 0;
   const startTime = performance.now();
   const span = Math.max(1, deadline - startTime);
   const docById = new Map(docs.map(d => [d.id, d]));
-
-  const replace = (docId: string, list: Assignment[], ev: DoctorEval) => {
-    state.byDoc.set(docId, list);
-    state.evals.set(docId, ev);
+  const slotsByDate = new Map<string, Slot[]>();
+  for (const s of ctx.slots) (slotsByDate.get(s.date) ?? slotsByDate.set(s.date, []).get(s.date)!).push(s);
+  const isCritical = (a: Assignment) => ctx.demand.get(demandKey(a.date, a.areaId, a.shiftId))?.critical ?? false;
+  /** La catena di a (se e in rotazione), solo se tutta spostabile. */
+  const groupOf = (doc: Doctor, a: Assignment): Assignment[] | null => {
+    const g = doc.inRotation ? chainOf(ctx, state.byDoc.get(doc.id)!, a) : [a];
+    return g.every(isMovable) ? g : null;
   };
 
   while (performance.now() < deadline) {
     iter++;
     if (iter % 200 === 0) {
-      pool = movable();
       onProgress?.(progressStart + (1 - progressStart) * Math.min(1, (performance.now() - startTime) / span));
     }
     const temp = 40 * Math.max(0, 1 - (performance.now() - startTime) / span);
@@ -221,17 +297,18 @@ function improve(ctx: MonthContext, state: State, random: () => number, deadline
     const move = random();
 
     if (move < 0.15) {
-      // Riempi un buco.
+      // Riempi un buco (con la sua catena).
       const holes = ctx.slots.filter(s => !state.isFilled(s));
       if (holes.length === 0) continue;
       const slot = holes[Math.floor(random() * holes.length)];
       const doc = docs[Math.floor(random() * docs.length)];
+      const chain = doc.inRotation ? chainFrom(ctx, state, slot, slotsByDate) : [slot];
       const before = state.evals.get(doc.id)!;
-      const a = makeAssignment(slot, doc.id);
-      const after = state.tryAdd(doc, a);
-      if (!feasible(before, after, slot.critical)) continue;
-      const gain = slot.optional ? 0 : slot.critical ? COST.uncoveredCritical : COST.uncovered;
-      if (after.total - before.total - gain < 0) state.add(doc, a, after);
+      const adds = chain.map(s => makeAssignment(s, doc.id));
+      const after = state.tryAdd(doc, adds);
+      if (!feasible(before, after, chain.some(s => s.critical))) continue;
+      const gain = chain.reduce((g, s) => g + (s.optional ? 0 : s.critical ? COST.uncoveredCritical : COST.uncovered), 0);
+      if (after.total - before.total - gain < 0) { state.add(doc, adds, after); pool = movable(); }
       continue;
     }
 
@@ -239,48 +316,48 @@ function improve(ctx: MonthContext, state: State, random: () => number, deadline
     const a = pool[Math.floor(random() * pool.length)];
     const from = docById.get(a.doctorId);
     if (!from) continue;
-    const critical = ctx.demand.get(demandKey(a.date, a.areaId, a.shiftId))?.critical ?? false;
+    const groupA = groupOf(from, a);
+    if (!groupA) continue;
+    const critA = groupA.some(isCritical);
 
     if (move < 0.55) {
-      // Sposta il turno su un altro medico.
+      // Sposta il turno (o la catena) su un altro medico.
       const to = docs[Math.floor(random() * docs.length)];
       if (to.id === from.id) continue;
-      const fromList = state.byDoc.get(from.id)!.filter(x => x !== a);
-      const moved = { ...a, doctorId: to.id };
-      const toList = [...state.byDoc.get(to.id)!, moved];
+      const moved = groupA.map(x => ({ ...x, doctorId: to.id }));
+      const fromList = state.byDoc.get(from.id)!.filter(x => !groupA.includes(x));
+      const toList = [...state.byDoc.get(to.id)!, ...moved];
       const evFrom = evaluateDoctor(ctx, from, fromList);
       const evTo = evaluateDoctor(ctx, to, toList);
       const bFrom = state.evals.get(from.id)!, bTo = state.evals.get(to.id)!;
-      if (!feasible(bTo, evTo, critical) || evFrom.strict > bFrom.strict) continue;
+      if (!feasible(bTo, evTo, critA) || evFrom.strict > bFrom.strict) continue;
       const delta = evFrom.total + evTo.total - bFrom.total - bTo.total;
       if (accept(delta)) {
-        replace(from.id, fromList, evFrom);
-        replace(to.id, toList, evTo);
-        const i = pool.indexOf(a);
-        if (i >= 0) pool[i] = moved;
+        state.replace(from.id, fromList, evFrom);
+        state.replace(to.id, toList, evTo);
+        pool = movable();
       }
     } else {
-      // Scambia due turni fra due medici.
+      // Scambia due turni (o due catene) fra due medici.
       const b = pool[Math.floor(random() * pool.length)];
       if (b.doctorId === a.doctorId || b.date === a.date && b.shiftId === a.shiftId) continue;
       const other = docById.get(b.doctorId);
       if (!other) continue;
-      const critB = ctx.demand.get(demandKey(b.date, b.areaId, b.shiftId))?.critical ?? false;
-      const a2 = { ...a, doctorId: other.id };
-      const b2 = { ...b, doctorId: from.id };
-      const fromList = [...state.byDoc.get(from.id)!.filter(x => x !== a), b2];
-      const otherList = [...state.byDoc.get(other.id)!.filter(x => x !== b), a2];
+      const groupB = groupOf(other, b);
+      if (!groupB) continue;
+      const a2 = groupA.map(x => ({ ...x, doctorId: other.id }));
+      const b2 = groupB.map(x => ({ ...x, doctorId: from.id }));
+      const fromList = [...state.byDoc.get(from.id)!.filter(x => !groupA.includes(x)), ...b2];
+      const otherList = [...state.byDoc.get(other.id)!.filter(x => !groupB.includes(x)), ...a2];
       const evFrom = evaluateDoctor(ctx, from, fromList);
       const evOther = evaluateDoctor(ctx, other, otherList);
       const bFrom = state.evals.get(from.id)!, bOther = state.evals.get(other.id)!;
-      if (!feasible(bFrom, evFrom, critB) || !feasible(bOther, evOther, critical)) continue;
+      if (!feasible(bFrom, evFrom, groupB.some(isCritical)) || !feasible(bOther, evOther, critA)) continue;
       const delta = evFrom.total + evOther.total - bFrom.total - bOther.total;
       if (accept(delta)) {
-        replace(from.id, fromList, evFrom);
-        replace(other.id, otherList, evOther);
-        const ia = pool.indexOf(a), ib = pool.indexOf(b);
-        if (ia >= 0) pool[ia] = a2;
-        if (ib >= 0) pool[ib] = b2;
+        state.replace(from.id, fromList, evFrom);
+        state.replace(other.id, otherList, evOther);
+        pool = movable();
       }
     }
   }

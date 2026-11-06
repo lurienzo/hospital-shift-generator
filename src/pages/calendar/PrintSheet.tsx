@@ -9,7 +9,7 @@ import { addDays, monthLabel, parseIso, WEEKDAY_LETTER, WEEKDAY_SHORT, weekdayOf
 import type { Assignment, Doctor } from '../../domain/types';
 import { shortName } from '../../io/excel';
 import type { MonthView } from '../../store/month';
-import { areaColumns, buildGroups, shiftsInManyAreas, type ColumnGroup, type LineLabel } from './layout';
+import { areaColumns, buildGroups, offDoctors, shiftsInManyAreas, viewColumns, type ColumnGroup, type LineLabel } from './layout';
 
 type Mode = 'doctor' | 'area' | 'shift';
 
@@ -142,8 +142,9 @@ export function PrintSheet({ view, mode, layout, showOff, serviceName }: {
     return parts;
   };
 
-  const offDay = (d: string, which: 'smonto' | 'riposo') => ctx.doctors
-    .filter(doc => (which === 'smonto' ? nightOn(doc.id, addDays(d, -1)) : !nightOn(doc.id, addDays(d, -1)) && nightOn(doc.id, addDays(d, -2))))
+  const dayOf = (docId: string, date: string) =>
+    byDocDate.get(`${docId}|${date}`) ?? ctx.tailByDoctor.get(docId)?.filter(a => a.date === date) ?? [];
+  const offDay = (d: string, which: 'smonto' | 'riposo', night: ColumnGroup) => offDoctors(ctx, night, d, which, dayOf)
     .map(doc => <span key={doc.id} className="p-doc p-doc-off" style={{ background: pastel(doc.color, 16), borderLeftColor: doc.color }}>{surname(doc.name)}</span>);
 
   const dayLabel = (d: string) => (
@@ -193,28 +194,26 @@ export function PrintSheet({ view, mode, layout, showOff, serviceName }: {
       </table>
     );
   } else {
-    const groups = buildGroups(ctx, areaColumns(ctx, byKey), mode);
+    const vcols = viewColumns(buildGroups(ctx, areaColumns(ctx, byKey), mode), showOff);
     table = (
       <table className="p-table">
         <thead>
           <tr>
             <th className="p-first p-title"><b>{serviceName}</b><span>{monthLabel(ctx.year, ctx.month)}</span></th>
-            {groups.map(g => <th key={g.id}>{g.name}</th>)}
-            {showOff && <><th className="p-offh">Smonto</th><th className="p-offh">Riposo</th></>}
+            {vcols.map(v => v.kind === 'slots' ? <th key={v.id}>{v.group.name}</th> : <th key={v.id} className="p-offh">{v.name}</th>)}
           </tr>
         </thead>
         <tbody>
           {ctx.dates.map(d => (
             <tr key={d} className={rowClass(d)}>
               <td className="p-first">{dayLabel(d)}</td>
-              {groups.map(g => (
-                <td key={g.id}>
-                  {groupDay(g, d).map((p, i) => (
+              {vcols.map(v => v.kind === 'off' ? <td key={v.id} className="p-rest">{offDay(d, v.which, v.night)}</td> : (
+                <td key={v.id}>
+                  {groupDay(v.group, d).map((p, i) => (
                     <span key={i}>{i > 0 && <span className="p-sep"> </span>}{p.doc ? <DocName doc={p.doc} prefix={p.prefix} /> : <span className={p.cls}>{p.text}</span>}</span>
                   ))}
                 </td>
               ))}
-              {showOff && <><td className="p-rest">{offDay(d, 'smonto')}</td><td className="p-rest">{offDay(d, 'riposo')}</td></>}
             </tr>
           ))}
         </tbody>

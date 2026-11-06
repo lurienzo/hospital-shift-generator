@@ -8,7 +8,7 @@
 import { addToTally, emptyTally, SCALAR_KEYS, type Tally } from './fairness';
 import { demandKey, dayKeyOf, type MonthContext, type ShiftInfo, type Slot } from './context';
 import { addDays, diffDays, formatDay, weekStart, weekdayOf } from './dates';
-import type { Assignment, Doctor } from './types';
+import type { Assignment, Doctor, SchemeStep } from './types';
 
 export type IssueKind =
   // errori: vincoli che non si violano
@@ -136,6 +136,8 @@ export const COST = {
   consecutive: 100,
   weekdayAvoid: 120,
   rotationMismatch: 30,
+  /** Catena della rotazione spezzata (es. lunga senza la notte del giorno dopo) in modalita preferenza. */
+  rotationChain: 400,
   hoursWeekPerHour: 6,
   hoursMonthUnderPerHour: 4,
   hoursMonthOverPerHour: 8,
@@ -342,43 +344,98 @@ export function evaluateDoctor(ctx: MonthContext, doc: Doctor, list: readonly As
   }
 
   // Rotazione del servizio.
-  if (ctx.scheme && doc.inRotation) soft += evaluateRotation(ctx, byDate, push);
+  if (ctx.scheme && doc.inRotation) soft += evaluateRotation(ctx, byDate, nightOn, push);
 
   const fairness = fairnessCost(ctx, doc, tally);
   return { strict, relaxable, protectedViolations, soft, fairness, total: strict * COST.hard + relaxable * COST.hard + soft + fairness, tally };
 }
 
+/** Posizioni dello schema occupate da un turno. */
+export function schemePositions(steps: readonly SchemeStep[], shiftId: string): number[] {
+  const out: number[] = [];
+  steps.forEach((s, i) => { if (s.kind === 'shift' && s.shiftId === shiftId) out.push(i); });
+  return out;
+}
+
+/** Turno dello schema al passo i, se e un turno (non smonto o riposo). */
+export function schemeShiftAt(steps: readonly SchemeStep[], i: number): string | null {
+  const s = steps[i];
+  return s && s.kind === 'shift' ? s.shiftId : null;
+}
+
+/**
+ * Rotazione. Il cuore sono le catene: passi dello schema che sono turni in
+ * giorni consecutivi (es. lunga -> notte) vanno fatti dallo stesso medico, uno
+ * dopo l'altro. Con la rotazione vincolante una catena spezzata e un errore;
+ * lo smonto e gia vincolante per conto suo, il riposo resta l'unica cosa
+ * sacrificabile e se salta si conta come avviso.
+ */
 function evaluateRotation(
   ctx: MonthContext,
   byDate: Map<string, Assignment[]>,
+  nightOn: (date: string) => boolean,
   push: (kind: IssueKind, severity: Severity, message: string, a?: Assignment, date?: string) => void,
 ): number {
   const steps = ctx.scheme!;
   const L = steps.length;
   const binding = ctx.config.rules.rotation.strength === 'binding';
+  const lastDate = ctx.dates[ctx.dates.length - 1];
+  const shiftName = (id: string) => ctx.shifts.get(id)?.name.toLowerCase() ?? '';
+  const has = (date: string, shiftId: string) => byDate.get(date)?.some(a => a.shiftId === shiftId) ?? false;
   let cost = 0;
+
+  // 1. Catene.
+  for (const date of ctx.dates) {
+    for (const a of byDate.get(date) ?? []) {
+      if (ctx.shifts.get(a.shiftId)?.isBlock) continue;
+      const positions = schemePositions(steps, a.shiftId);
+      if (positions.length === 0) continue;
+      let broken: string | null = null;
+      for (const p of positions) {
+        const prev = schemeShiftAt(steps, p - 1);
+        const next = schemeShiftAt(steps, p + 1);
+        const prevDate = addDays(date, -1), nextDate = addDays(date, 1);
+        const prevKnown = ctx.dateSet.has(prevDate) || ctx.hasTail;
+        const prevOk = !prev || !prevKnown || has(prevDate, prev);
+        const nextOk = !next || nextDate > lastDate || has(nextDate, next);
+        if (prevOk && nextOk) { broken = null; break; }
+        broken ??= !prevOk ? `la rotazione prevede la ${shiftName(prev!)} il giorno prima` : `la rotazione prevede la ${shiftName(next!)} il giorno dopo`;
+      }
+      if (!broken) continue;
+      const msg = `${ctx.shifts.get(a.shiftId)!.name} ${formatDay(date)}: ${broken}`;
+      if (binding) push('rotation-binding', 'error', msg, a);
+      else { cost += COST.rotationChain; push('rotation', 'warning', msg, a); }
+    }
+  }
+
+  // 2. Giorni di smonto e riposo previsti dallo schema e turni fuori posto.
   let lastPos = -1;
-  let lastDate = '';
+  let lastDate2 = '';
   for (const date of [...ctx.tailDates, ...ctx.dates]) {
     const items = byDate.get(date) ?? [];
     const worked = items.find(a => !ctx.shifts.get(a.shiftId)?.isBlock);
     const onBlock = items.length > 0 && !worked;
     if (onBlock) {
       // Durante un blocco di diurnismo la rotazione resta sospesa.
-      if (lastPos >= 0) lastDate = addDays(lastDate, 1);
+      if (lastPos >= 0) lastDate2 = addDays(lastDate2, 1);
       continue;
     }
-    const gap = lastPos >= 0 ? diffDays(date, lastDate) : Infinity;
+    const gap = lastPos >= 0 ? diffDays(date, lastDate2) : Infinity;
     const expectedPos = gap < L ? (lastPos + gap) % L : -1;
     const expected = expectedPos >= 0 ? steps[expectedPos] : null;
     if (worked && expected && ctx.dateSet.has(date)) {
       const shift = ctx.shifts.get(worked.shiftId)!;
-      if (expected.kind !== 'shift') {
-        // Smonto e riposo dopo la notte hanno gia regole proprie (smonto
-        // vincolante, riposo saltato): la rotazione non li ripete come avviso.
-        // Solo se la rotazione e vincolante quei giorni restano bloccati.
-        const what = expected.kind === 'smonto' ? 'smonto' : 'riposo';
-        if (binding) push('rotation-binding', 'error', `${shift.name} ${formatDay(date)}: la rotazione prevede ${what}`, worked);
+      if (expected.kind === 'smonto') {
+        // Dopo una notte lo smonto ha gia la sua regola; uno smonto dello
+        // schema non legato a una notte vale solo con la rotazione vincolante.
+        if (binding && !nightOn(addDays(date, -1))) push('rotation-binding', 'error', `${shift.name} ${formatDay(date)}: la rotazione prevede lo smonto`, worked);
+      } else if (expected.kind === 'riposo') {
+        // Il riposo e sacrificabile: avviso, mai errore. Dopo una notte lo
+        // segnala gia la regola del riposo saltato.
+        if (binding && !nightOn(addDays(date, -2))) {
+          cost += COST.riposo;
+          push('riposo', 'warning', `${shift.name} ${formatDay(date)}: salta il riposo previsto dalla rotazione`, worked);
+        }
       } else if (expected.shiftId !== worked.shiftId) {
         cost += COST.rotationMismatch;
         const exp = ctx.shifts.get(expected.shiftId)?.name ?? '';
@@ -389,7 +446,7 @@ function evaluateRotation(
       const pos = expected?.kind === 'shift' && expected.shiftId === worked.shiftId
         ? expectedPos
         : steps.findIndex(s => s.kind === 'shift' && s.shiftId === worked.shiftId);
-      if (pos >= 0) { lastPos = pos; lastDate = date; }
+      if (pos >= 0) { lastPos = pos; lastDate2 = date; }
     }
   }
   return cost;

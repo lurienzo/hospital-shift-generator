@@ -4,7 +4,8 @@ import { nightCapacity } from './capacity';
 import type { Assignment } from './types';
 import { buildContext } from './context';
 import { addDays, monthDates, monthKey, weekdayOf } from './dates';
-import { EXAMPLE_DOCTORS, makeDoctor, templateConfig } from './defaults';
+import { DAY_KEYS } from './types';
+import { defaultRules, emptyCoverage, EXAMPLE_DOCTORS, fillCoverage, makeArea, makeDoctor, makeShift, templateConfig } from './defaults';
 import { generate } from './generator';
 import { easterSunday, italianHolidays, monthHolidays } from './holidays';
 import { emptyMonth, type MonthData, type ServiceConfig } from './types';
@@ -302,5 +303,67 @@ describe('turni rimossi, aggiunti e opzionali', () => {
     const an = analyzeSchedule(ctx, []);
     expect(an.uncovered.some(u => u.shiftId === m)).toBe(false);
     expect(an.counts.slots).toBe(ctx.slots.filter(s => s.shiftId !== m).length);
+  });
+});
+
+describe('rotazione vincolante lunga → notte → smonto → riposo', () => {
+  // Il caso reale: due linee parallele (Lunga + Notte, SEI Lunga + SEI notte),
+  // 14 medici, schema L N S R vincolante.
+  function rotationConfig(doctors = 14): ServiceConfig {
+    const L = makeShift({ name: 'Lunga', code: 'L', start: '08:00', end: '20:00', color: '#10b981', kind: 'day', block: null });
+    const N = makeShift({ name: 'Notte', code: 'N', start: '20:00', end: '08:00', color: '#6366f1', kind: 'night', block: null });
+    const area = (name: string, shiftId: string) => ({ ...makeArea(name, '#2563eb'), coverage: fillCoverage(emptyCoverage(), shiftId, DAY_KEYS, 1, false) });
+    const rules = { ...defaultRules(), minNightGap: 3, maxConsecutiveDays: 5, allowMultiplePerDay: true, longSameArea: 'binding' as const };
+    rules.schemes = [{ id: 's1', name: 'Schema 1', steps: [{ kind: 'shift', shiftId: L.id }, { kind: 'shift', shiftId: N.id }, { kind: 'smonto' }, { kind: 'riposo' }] }];
+    rules.rotation = { schemeId: 's1', strength: 'binding' };
+    const names = Array.from({ length: doctors }, (_, i) => `Medico ${i + 1}`);
+    return {
+      shiftTypes: [N, L],
+      areas: [area('Lunga', L.id), area('Notte', N.id), area('SEI Lunga', L.id), area('SEI notte', N.id)],
+      doctors: names.map(n => makeDoctor(n, '#000', '2026-01')),
+      rules,
+    } as ServiceConfig;
+  }
+
+  it('chi fa la lunga fa la notte il giorno dopo, sempre', () => {
+    const config = rotationConfig();
+    const ctx = buildContext({ config, year: 2026, month: 12, months: {} });
+    const { assignments } = generate(ctx, { timeMs: 1500, seed: 7 });
+    const analysis = analyzeSchedule(ctx, assignments);
+    const L = config.shiftTypes.find(s => s.code === 'L')!.id;
+    const N = config.shiftTypes.find(s => s.code === 'N')!.id;
+    expect(analysis.counts.uncovered).toBe(0);
+    expect(analysis.issues.filter(i => i.severity === 'error')).toEqual([]);
+    for (const a of assignments) {
+      if (a.shiftId === L && a.date < '2026-12-31') {
+        expect(assignments.some(x => x.doctorId === a.doctorId && x.shiftId === N && x.date === addDays(a.date, 1))).toBe(true);
+      }
+      if (a.shiftId === N && a.date > '2026-12-01') {
+        expect(assignments.some(x => x.doctorId === a.doctorId && x.shiftId === L && x.date === addDays(a.date, -1))).toBe(true);
+      }
+    }
+    // Le linee restano appaiate: dalla Lunga alla Notte, dalla SEI Lunga alla SEI notte.
+    const areaName = (id: string) => config.areas.find(x => x.id === id)!.name;
+    const pairs = new Set(assignments.filter(a => a.shiftId === L && a.date < '2026-12-31').map(a => {
+      const n = assignments.find(x => x.doctorId === a.doctorId && x.shiftId === N && x.date === addDays(a.date, 1))!;
+      return `${areaName(a.areaId)}>${areaName(n.areaId)}`;
+    }));
+    expect([...pairs].sort()).toEqual(['Lunga>Notte', 'SEI Lunga>SEI notte']);
+  });
+
+  it('una lunga senza la notte del giorno dopo è un errore, il riposo saltato solo un avviso', () => {
+    const config = rotationConfig(4);
+    const ctx = buildContext({ config, year: 2026, month: 12, months: {} });
+    const [lunga, notte] = [config.areas[0], config.areas[1]];
+    const L = config.shiftTypes.find(s => s.code === 'L')!.id;
+    const N = config.shiftTypes.find(s => s.code === 'N')!.id;
+    const d = config.doctors[0].id;
+    const mk = (date: string, areaId: string, shiftId: string): Assignment => ({ id: `${date}${shiftId}`, date, areaId, shiftId, doctorId: d });
+    const broken = analyzeSchedule(ctx, [mk('2026-12-03', lunga.id, L)]);
+    expect(broken.issues.some(i => i.kind === 'rotation-binding' && i.doctorId === d)).toBe(true);
+    const ok = analyzeSchedule(ctx, [mk('2026-12-03', lunga.id, L), mk('2026-12-04', notte.id, N), mk('2026-12-06', lunga.id, L), mk('2026-12-07', notte.id, N)]);
+    const mine = ok.issues.filter(i => i.doctorId === d);
+    expect(mine.filter(i => i.severity === 'error')).toEqual([]);
+    expect(mine.some(i => i.kind === 'riposo')).toBe(true);
   });
 });

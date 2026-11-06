@@ -47,6 +47,8 @@ export interface MonthContext {
   /** Ultimi giorni del mese precedente (versione definitiva): continuita di smonto, riposo, rotazione. */
   tailByDoctor: Map<string, Assignment[]>;
   tailDates: string[];
+  /** Il mese precedente ha una versione definitiva: la coda e affidabile. */
+  hasTail: boolean;
   fair: Map<string, FairBase>;
   scheme: SchemeStep[] | null;
 }
@@ -150,7 +152,8 @@ export function buildContext({ config, year, month, months }: BuildContextInput)
 
   // Coda del mese precedente: solo la versione definitiva fa testo.
   const prev = shiftMonth(year, month, -1);
-  const prevAssignments = activeAssignments(months[monthKey(prev.year, prev.month)]) ?? [];
+  const prevActive = activeAssignments(months[monthKey(prev.year, prev.month)]);
+  const prevAssignments = prevActive ?? [];
   const tailDates = Array.from({ length: TAIL_DAYS }, (_, i) => addDays(dates[0], i - TAIL_DAYS));
   const tailSet = new Set(tailDates);
   const tailByDoctor = new Map<string, Assignment[]>();
@@ -180,6 +183,7 @@ export function buildContext({ config, year, month, months }: BuildContextInput)
     removed,
     tailByDoctor,
     tailDates,
+    hasTail: prevActive !== null,
     fair: new Map(),
     scheme: steps.length > 0 ? steps : null,
   };

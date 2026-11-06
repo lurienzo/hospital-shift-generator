@@ -15,7 +15,7 @@ import { UNIFORM, useColWidths, type ColWidths } from './colWidths';
 import { useStore } from '../../store/store';
 import { judge, setDragging, useDragging, type Verdict } from './dragCheck';
 import { addSlot, dropOnDoctorDay, dropOnSlot, planDoctorDay, planSlot } from './ops';
-import { areaColumns, buildGroups, shiftsInManyAreas, type AreaColumn, type GroupMode, type LineLabel } from './layout';
+import { areaColumns, buildGroups, offDoctors, shiftsInManyAreas, viewColumns, type AreaColumn, type ColumnGroup, type GroupMode, type LineLabel } from './layout';
 import { DoctorDayPopover, SlotPopover } from './Popovers';
 
 export type Layout = 'rows' | 'cols';
@@ -387,7 +387,7 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
   const ctx = view.ctx!;
   const data = useGridData(view);
   const [pop, setPop] = useState<{ slot: SlotRef; current: Assignment | null; anchor: DOMRect; removed?: boolean } | null>(null);
-  const [addPop, setAddPop] = useState<{ date: string; groupId: string; anchor: DOMRect } | null>(null);
+  const [addPop, setAddPop] = useState<{ date: string; group: ColumnGroup; anchor: DOMRect } | null>(null);
   const columns = useMemo(() => areaColumns(ctx, data.byKey), [ctx, data.byKey]);
   const today = todayIso();
   const dragIds = useDragging();
@@ -408,28 +408,21 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
   }, [dragIds, view.version, ctx, columns, data.byKey]);
   const cw = useColWidths(`${mode}-${layout}`, layout === 'rows' ? { first: 88, minCol: 90 } : { first: 130, minCol: 30 });
   const showOff = useStore(s => s.ui.showOffCols);
-  // Smonto e riposo del giorno: chi ha fatto la notte ieri / l'altro ieri.
-  const offOf = (d: string) => {
-    const smonto: { doc: Doctor; skipped: boolean }[] = [], riposo: { doc: Doctor; skipped: boolean }[] = [];
-    for (const doc of ctx.doctors) {
-      const works = (data.byDocDate.get(`${doc.id}|${d}`)?.length ?? 0) > 0;
-      if (data.nightOn(doc.id, addDays(d, -1))) smonto.push({ doc, skipped: works });
-      else if (data.nightOn(doc.id, addDays(d, -2))) riposo.push({ doc, skipped: works });
-    }
-    return { smonto, riposo };
-  };
-  const offPills = (d: string, which: 'smonto' | 'riposo') => {
-    const o = offOf(d);
-    const list = which === 'smonto' ? o.smonto : o.riposo;
-    return (
-      <div className="off-stack">
-        {list.map(({ doc, skipped }) => (
+  // Smonto e riposo del giorno per le notti di un gruppo: chi le ha fatte
+  // ieri / l'altro ieri. Lavorare in smonto e un errore, in riposo un avviso.
+  const dayOf = (docId: string, date: string) =>
+    data.byDocDate.get(`${docId}|${date}`) ?? ctx.tailByDoctor.get(docId)?.filter(a => a.date === date) ?? [];
+  const offPills = (d: string, which: 'smonto' | 'riposo', night: ColumnGroup) => (
+    <div className="off-stack">
+      {offDoctors(ctx, night, d, which, dayOf).map(doc => {
+        const skipped = (data.byDocDate.get(`${doc.id}|${d}`)?.length ?? 0) > 0;
+        return (
           <span key={doc.id} className={`off-pill ${skipped ? (which === 'smonto' ? 'violated' : 'skipped') : ''}`} style={skipped ? undefined : { background: tint(doc.color, 22), color: 'var(--text-2)', boxShadow: `inset 3px 0 0 ${doc.color}` }}
             title={skipped ? `${doc.name}: lavora nel giorno di ${which}` : doc.name}>{skipped && which === 'smonto' ? '! ' : ''}{surname(doc.name)}</span>
-        ))}
-      </div>
-    );
-  };
+        );
+      })}
+    </div>
+  );
 
   /** Il posto (area, turno, indice) di un giorno: medico, buco o niente. */
   const slotBox = (col: AreaColumn, d: string) => {
@@ -475,6 +468,8 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
     <td key={`${col.area.id}|${col.shift.id}|${col.index}|${d}`} className={dayClass(d, ctx.holidays)}>{slotBox(col, d)}</td>
   );
 
+  const groups = buildGroups(ctx, columns, mode);
+  const vcols = viewColumns(groups, showOff);
   const popover = (
     <>
       {pop && <SlotPopover view={view} slot={pop.slot} current={pop.current} anchor={pop.anchor} removed={pop.removed} onClose={() => setPop(null)} />}
@@ -482,8 +477,10 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
         <Popover anchor={addPop.anchor} onClose={() => setAddPop(null)}>
           <div className="pop-label">Aggiungi un turno · {formatDay(addPop.date)}</div>
           {(mode === 'area'
-            ? ctx.config.shiftTypes.filter(s => !s.areaId || s.areaId === addPop.groupId).map(s => ({ areaId: addPop.groupId, shiftId: s.id, label: s.name, color: s.color, code: s.code }))
-            : ctx.config.areas.map(a => ({ areaId: a.id, shiftId: addPop.groupId, label: a.name, color: a.color, code: shortName(a.name) }))
+            ? ctx.config.shiftTypes
+              .filter(s => (!s.areaId || s.areaId === addPop.group.cols[0].area.id) && (addPop.group.night ? addPop.group.cols.some(c => c.shift.id === s.id) : s.kind !== 'night' || !groups.some(g => g.night && g.cols[0].area.id === addPop.group.cols[0].area.id)))
+              .map(s => ({ areaId: addPop.group.cols[0].area.id, shiftId: s.id, label: s.name, color: s.color, code: s.code }))
+            : ctx.config.areas.map(a => ({ areaId: a.id, shiftId: addPop.group.id, label: a.name, color: a.color, code: shortName(a.name) }))
           ).map(o => {
             const count = ctx.demand.get(demandKey(addPop.date, o.areaId, o.shiftId))?.count ?? 0;
             return (
@@ -498,7 +495,6 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
       )}
     </>
   );
-  const groups = buildGroups(ctx, columns, mode);
   const renderLabel = (l: LineLabel | null): ReactNode => {
     if (!l) return null;
     return (
@@ -517,31 +513,33 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
     return (
       <>
         <div className="cal-wrap">
-          <table className="cal rows fixed" style={cw.tableStyle(groups.length + (showOff ? 2 : 0), ['first'])}>
+          <table className="cal rows fixed" style={cw.tableStyle(vcols.length, ['first'])}>
             <colgroup>
               <col style={{ width: cw.fixed('first') }} />
-              {groups.map(g => <col key={g.id} style={cw.colStyle} />)}
-              {showOff && <><col style={cw.colStyle} /><col style={cw.colStyle} /></>}
+              {vcols.map(v => <col key={v.id} style={cw.colStyle} />)}
             </colgroup>
             <thead>
               <tr>
                 <th className="name-col day-col">Giorno{cw.handle('first')}</th>
-                {groups.map(g => (
-                  <th key={g.id} className="area-group" style={{ borderTop: `3px solid ${g.color}` }} title={g.name}>
-                    {g.name}{cw.handle(UNIFORM)}
+                {vcols.map(v => v.kind === 'slots' ? (
+                  <th key={v.id} className="area-group" style={{ borderTop: `3px solid ${v.group.color}` }} title={v.group.name}>
+                    {v.group.name}{cw.handle(UNIFORM)}
+                  </th>
+                ) : (
+                  <th key={v.id} className="area-group off-head" style={{ borderTop: `3px solid ${v.night.color}` }}
+                    title={v.which === 'smonto' ? `Chi ha fatto ${v.night.name} il giorno prima` : `Chi ha fatto ${v.night.name} due giorni prima`}>
+                    {v.name}{cw.handle(UNIFORM)}
                   </th>
                 ))}
-                {showOff && <>
-                  <th className="area-group off-head" title="Chi ha fatto la notte il giorno prima">Smonto{cw.handle(UNIFORM)}</th>
-                  <th className="area-group off-head" title="Chi ha fatto la notte due giorni prima">Riposo{cw.handle(UNIFORM)}</th>
-                </>}
               </tr>
             </thead>
             <tbody>
               {ctx.dates.map(d => (
                 <tr key={d} className={d === today ? 'today-row' : ''}>
                   <td data-day={d} className={`name-col day-col ${dayClass(d, ctx.holidays)}`}><DayLabel date={d} holidays={ctx.holidays} /></td>
-                  {groups.map(g => {
+                  {vcols.map(v => {
+                    if (v.kind === 'off') return <td key={v.id} className={`off-col ${dayClass(d, ctx.holidays)}`}>{offPills(d, v.which, v.night)}</td>;
+                    const g = v.group;
                     const lines = g.cols.map(c => ({ c, box: slotBox(c, d) })).filter(x => x.box);
                     return (
                       <td key={g.id} className={dayClass(d, ctx.holidays)}>
@@ -553,15 +551,11 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
                             </div>
                           ))}
                           <button className="add-slot" title="Aggiungi un turno in questo giorno"
-                            onClick={e => setAddPop({ date: d, groupId: g.id, anchor: e.currentTarget.getBoundingClientRect() })}>+</button>
+                            onClick={e => setAddPop({ date: d, group: g, anchor: e.currentTarget.getBoundingClientRect() })}>+</button>
                         </div>
                       </td>
                     );
                   })}
-                  {showOff && <>
-                    <td className={`off-col ${dayClass(d, ctx.holidays)}`}>{offPills(d, 'smonto')}</td>
-                    <td className={`off-col ${dayClass(d, ctx.holidays)}`}>{offPills(d, 'riposo')}</td>
-                  </>}
                 </tr>
               ))}
             </tbody>
@@ -587,7 +581,12 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
             </tr>
           </thead>
           <tbody>
-            {groups.map(g => [
+            {vcols.map(v => v.kind === 'off' ? (
+              <tr key={v.id} className="off-row">
+                <td className="name-col"><div className="area-row-label">{v.name}</div></td>
+                {ctx.dates.map(d => <td key={d} className={`off-col ${dayClass(d, ctx.holidays)}`}>{offPills(d, v.which, v.night)}</td>)}
+              </tr>
+            ) : [v.group].flatMap(g => [
               <tr key={g.id} className="area-head">
                 <td className="name-col"><div className="row"><span className="color-dot" style={{ background: g.color }} />{g.name}</div></td>
                 <td colSpan={ctx.dates.length} />
@@ -603,13 +602,7 @@ export const AreaGrid = memo(function AreaGrid({ view, layout, mode = 'area' }: 
                     {ctx.dates.map(d => cell(c, d))}
                   </tr>
                 ))),
-            ])}
-            {showOff && (['smonto', 'riposo'] as const).map(which => (
-              <tr key={which} className="off-row">
-                <td className="name-col"><div className="area-row-label">{which === 'smonto' ? 'Smonto' : 'Riposo'}</div></td>
-                {ctx.dates.map(d => <td key={d} className={`off-col ${dayClass(d, ctx.holidays)}`}>{offPills(d, which)}</td>)}
-              </tr>
-            ))}
+            ]))}
           </tbody>
         </table>
       </div>

@@ -74,13 +74,16 @@ festivo conta come weekend e anche, a parte, come festivo.
 **Calendario.** Vista per medico, per area o **per turno** (una colonna per
 ogni turno, con la sala indicata solo se quel turno si fa in più sale), con i giorni in righe (sale o
 medici in colonna; nella vista per area una colonna per sala con i turni del
-giorno uno sopra l'altro, e le notti sempre in una colonna Notte a parte) oppure in colonne. Di default le colonne
+giorno uno sopra l'altro, e ogni notte sempre in una colonna a parte, una per
+area di notte) oppure in colonne. Le colonne seguono l'ordine delle aree, che si
+cambia con ↑ ↓ in *Turni e copertura*. Di default le colonne
 si dividono tutta la larghezza dello schermo; trascinando il bordo di una
 qualunque intestazione si allargano o stringono tutte insieme (la larghezza
 resta salvata) e *Adatta allo schermo* torna a quella automatica. Nella vista
-per area si possono mostrare le colonne **Smonto** e **Riposo**: chi ha fatto
-la notte il giorno prima o due giorni prima, con chi ha saltato il riposo in
-arancio barrato. Cliccando una casella si vede il perché
+per area si possono mostrare le colonne **Smonto** e **Riposo**, una coppia per
+ogni notte e subito dopo di lei (es. Lunga | Notte | Smonto | Riposo | SEI Lunga
+| SEI notte | Smonto | Riposo): chi ha fatto quella notte il giorno prima o due
+giorni prima, con chi ha saltato il riposo in arancio barrato. Cliccando una casella si vede il perché
 di errori e avvisi e si cambia il turno; trascinando un turno sopra quello di
 un altro medico i due si scambiano (anche in giorni diversi), su una casella
 vuota lo si sposta. I turni scoperti sono segnati con ‼ in rosso se critici e
@@ -143,7 +146,7 @@ menu accanto.
 Vincoli rigidi, mai violati: ferie e assenze, smonto, orari sovrapposti, aree e
 turni esclusi, giorni vietati. Tre vincoli rigidi possono essere forzati solo
 da un turno critico che altrimenti resterebbe scoperto: due turni non
-sovrapposti nello stesso giorno, tetto di ore, rotazione vincolante.
+sovrapposti nello stesso giorno, tetto di ore, catena della rotazione vincolante.
 
 Avvisi (costi): desiderate e "no notte", riposo post-notte saltato, notti
 troppo ravvicinate (distanza minima impostabile, 5 giorni di default), giorni
@@ -165,10 +168,16 @@ quota mensile, così chi è rimasto indietro non si vede scaricare tutto (per
 esempio tutte notti) in poche settimane. Il peso di ogni categoria si
 regola in *Regole*.
 
-**Rotazione.** Uno schema (es. Pomeriggio → Lunga → Notte → Smonto → Riposo)
-che i medici cercano di seguire su tutte le aree. La posizione di ciascuno
-deriva dall'ultimo turno svolto, quindi la rotazione si riallinea da sola. Può
-essere una preferenza o vincolante.
+**Rotazione.** Uno schema (es. Lunga → Notte → Smonto → Riposo) che i medici
+seguono su tutte le aree. I turni che lo schema mette in giorni consecutivi
+formano una **catena**: chi fa la lunga fa la notte il giorno dopo, e la notte
+va a chi ha fatto la lunga il giorno prima. Il generatore assegna la catena
+intera allo stesso medico, scegliendo per l'anello successivo la stessa area o
+quella che la segue nell'ordine (Lunga → Notte, SEI Lunga → SEI notte), e la
+ricerca locale sposta e scambia catene intere. Con la rotazione **vincolante**
+una catena spezzata è un errore; lo smonto è comunque vincolante; il riposo è
+l'unica cosa sacrificabile e, se salta, si conta come riposo saltato. Come
+**preferenza** la catena spezzata è un avviso.
 
 **Ore settimanali.** Forbice min–max (es. 36–42), con la scelta fra "si può
 superare e recuperare" (conta il totale del mese) e "non si supera mai".

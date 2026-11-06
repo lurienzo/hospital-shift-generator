@@ -54,6 +54,14 @@ export function ShiftsPage() {
     areas: areaId === null ? c.areas : c.areas.map(a => (a.id === areaId ? a : { ...a, coverage: dropShift(a.coverage, id) })),
   }));
 
+  const moveArea = (id: string, delta: number) => updateConfig(c => {
+    const i = c.areas.findIndex(a => a.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= c.areas.length) return c;
+    const areas = [...c.areas];
+    [areas[i], areas[j]] = [areas[j], areas[i]];
+    return { ...c, areas };
+  });
   const addArea = () => updateConfig(c => ({
     ...c,
     areas: [...c.areas, makeArea(`Area ${c.areas.length + 1}`, nextColor(c.areas.map(a => a.color)))],
@@ -135,14 +143,15 @@ export function ShiftsPage() {
         <div className="row">
           <div className="col" style={{ gap: 2 }}>
             <h2>Aree e copertura</h2>
-            <p className="hint">Per ogni area, quanti medici servono per turno e giorno. La colonna <b>Festivo</b> vale per i festivi infrasettimanali (in automatico). <b>C</b> = critico: va coperto sempre.</p>
+            <p className="hint">Per ogni area, quanti medici servono per turno e giorno. La colonna <b>Festivo</b> vale per i festivi infrasettimanali (in automatico). <b>C</b> = critico: va coperto sempre. Con <b>↑ ↓</b> scegli l’ordine delle aree: è l’ordine delle colonne nel calendario e nella stampa.</p>
           </div>
           <div className="spacer" />
           <button className="btn primary" onClick={addArea}><IconPlus size={16} /> Aggiungi area</button>
         </div>
 
         {config.areas.length === 0 && <div className="card empty"><p>Nessuna area da coprire. Aggiungi una sala, una postazione di terapia intensiva o una guardia.</p></div>}
-        {config.areas.map(area => <AreaCard key={area.id} area={area} shifts={config.shiftTypes} onDelete={() => confirm({
+        {config.areas.map((area, i) => <AreaCard key={area.id} area={area} shifts={config.shiftTypes}
+          onMove={delta => moveArea(area.id, delta)} first={i === 0} last={i === config.areas.length - 1} onDelete={() => confirm({
           title: `Eliminare ${area.name}?`, message: 'L’area non verrà più coperta dai prossimi calendari.', confirmLabel: 'Elimina', danger: true,
           onConfirm: () => updateConfig(c => {
             const own = new Set(c.shiftTypes.filter(s => s.areaId === area.id).map(s => s.id));
@@ -185,7 +194,9 @@ function dropShift(coverage: Area['coverage'], shiftId: string): Area['coverage'
   })) as Area['coverage'];
 }
 
-function AreaCard({ area, shifts: allShifts, onDelete }: { area: Area; shifts: ShiftType[]; onDelete: () => void }) {
+function AreaCard({ area, shifts: allShifts, onDelete, onMove, first, last }: {
+  area: Area; shifts: ShiftType[]; onDelete: () => void; onMove: (delta: number) => void; first: boolean; last: boolean;
+}) {
   const shifts = allShifts.filter(s => !s.areaId || s.areaId === area.id);
   const patchShift = (id: string, p: Partial<ShiftType>) => updateConfig(c => ({ ...c, shiftTypes: c.shiftTypes.map(s => (s.id === id ? { ...s, ...p } : s)) }));
   /** Nuovo orario solo per quest'area, gia attivo dal lunedi al venerdi. */
@@ -249,6 +260,10 @@ function AreaCard({ area, shifts: allShifts, onDelete }: { area: Area; shifts: S
         <button className="btn sm" onClick={addOwnShift} title="Un turno con orario proprio che vale solo per quest'area (es. sala 9–17)"><IconPlus size={16} /> Orario di quest’area</button>
         <button className="btn sm ghost" onClick={duplicate}><IconCopy size={16} /> Duplica</button>
         <button className="btn sm ghost danger" onClick={onDelete}><IconTrash size={16} /> Elimina</button>
+        <div className="row" style={{ gap: 2 }}>
+          <button className="btn ghost sm icon" disabled={first} onClick={() => onMove(-1)} aria-label="Sposta l’area su" title="Sposta su">↑</button>
+          <button className="btn ghost sm icon" disabled={last} onClick={() => onMove(1)} aria-label="Sposta l’area giù" title="Sposta giù">↓</button>
+        </div>
       </div>
       <div className="card-body table-wrap">
         {shifts.length === 0 ? <p className="hint">Definisci prima i tipi di turno.</p> : (
