@@ -104,10 +104,10 @@ export function DoctorsPage() {
 
       {editingDoc && <DoctorEditor doctor={editingDoc} config={config} onClose={() => setEditing(null)} />}
       {bulk !== null && (
-        <Modal title="Incolla elenco di medici" subtitle="Un nome per riga, anche copiato da una colonna di Excel. I nomi già presenti vengono saltati." onClose={() => setBulk(null)}
+        <Modal title="Incolla elenco di medici" subtitle="Un nome per riga, oppure separati da virgola o punto e virgola; anche copiato da una colonna di Excel. I nomi già presenti vengono saltati." onClose={() => setBulk(null)}
           footer={<>
             <button className="btn" onClick={() => setBulk(null)}>Annulla</button>
-            <button className="btn primary" onClick={() => { const names = bulk.split(/\n|\t|;/).map(s => s.trim()).filter(Boolean); addDoctors(names); notify(`${names.length} nomi elaborati`); setBulk(null); }}>Aggiungi</button>
+            <button className="btn primary" onClick={() => { const names = bulk.split(/[\n\t;,]/).map(s => s.trim()).filter(Boolean); addDoctors(names); notify(`${names.length} nomi elaborati`); setBulk(null); }}>Aggiungi</button>
           </>}>
           <textarea className="textarea" rows={10} value={bulk} onChange={e => setBulk(e.target.value)} placeholder={'Dott. Rossi\nDott.ssa Bianchi\n...'} autoFocus />
         </Modal>
