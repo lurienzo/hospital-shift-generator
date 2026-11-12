@@ -65,10 +65,20 @@ export function DoctorsPage() {
   const editingDoc = config.doctors.find(d => d.id === editing);
   const active = config.doctors.filter(d => d.active);
   const inactive = config.doctors.filter(d => !d.active);
+  const [clearNode, confirmClear] = useConfirm();
+  const clearAll = () => confirmClear({
+    title: `Eliminare tutti i ${config.doctors.length} medici?`,
+    message: 'L’elenco si svuota, con le esclusioni e le regole di ciascuno. I calendari già salvati li segnaleranno come medici eliminati. Non si può annullare.',
+    confirmLabel: 'Svuota elenco', danger: true,
+    onConfirm: () => { updateConfig(c => ({ ...c, doctors: [] })); notify('Elenco dei medici svuotato'); },
+  });
 
   return (
     <>
       <Topbar title="Medici">
+        {config.doctors.length > 0 && (
+          <button className="btn ghost danger" onClick={clearAll} title="Elimina tutti i medici in una volta"><IconTrash size={16} /> Svuota elenco</button>
+        )}
         {config.doctors.length > 1 && (
           <button className="btn" onClick={mixColors} title="Assegna a tutti colori ben distinti fra loro; ogni clic dà una combinazione diversa">Mescola colori</button>
         )}
@@ -102,6 +112,7 @@ export function DoctorsPage() {
           <textarea className="textarea" rows={10} value={bulk} onChange={e => setBulk(e.target.value)} placeholder={'Dott. Rossi\nDott.ssa Bianchi\n...'} autoFocus />
         </Modal>
       )}
+      {clearNode}
     </>
   );
 }
