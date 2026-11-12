@@ -454,6 +454,43 @@ button.stat:hover { border-color: var(--border-strong); }
 }
 .crit-toggle.on { background: var(--danger); color: #fff; border-color: var(--danger); }
 .crit-toggle:disabled { visibility: hidden; }
+.cov th.lbl { text-align: left; }
+.cov td:not(.lbl):not(.sticky-actions) { padding: 4px 2px; }
+.cov .input.sm.time { width: 86px; }
+.fascia { display: flex; flex-direction: column; gap: 5px; padding: 4px 0; }
+.fascia .badge { height: 20px; font-size: 11px; }
+.tag-toggle {
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); border-radius: 999px;
+  font-size: 11.5px; font-weight: 600; padding: 2px 9px; cursor: pointer;
+}
+.tag-toggle:hover { color: var(--text); }
+.tag-toggle.on { background: #6366f1; border-color: #6366f1; color: #fff; }
+/* Casella della copertura: numero al centro (clic = acceso/spento), + e − ai lati. */
+.cov-count { display: inline-flex; align-items: center; }
+.cov-num {
+  width: 30px; height: 30px; border-radius: 7px; border: 1px dashed var(--border-strong); background: var(--surface);
+  font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--text); cursor: pointer; user-select: none;
+}
+.cov-num:hover { border-color: var(--primary); }
+.cov-num:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.cov-cell.active .cov-num { border: 1px solid var(--primary); background: var(--primary); color: #fff; }
+.cov-cell.critical .cov-num { border: 1px solid var(--danger); background: var(--danger); color: #fff; }
+.cov-step {
+  width: 13px; height: 26px; border: 0; background: none; cursor: pointer; color: var(--muted); font-weight: 700; font-size: 14px; padding: 0;
+  opacity: 0; transition: opacity .12s;
+}
+.cov-cell:hover .cov-step, .cov-cell:focus-within .cov-step { opacity: 1; }
+.cov-step:hover { color: var(--text); }
+.cov-step:disabled { visibility: hidden; }
+.fascia-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px 14px; border-top: 1px solid var(--border); }
+.fascia-add .label { margin-right: 4px; }
+.add-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px 0 6px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); font-size: 12.5px; font-weight: 560; cursor: pointer;
+}
+.add-chip.new { border-style: dashed; padding-left: 8px; color: var(--muted); }
+.add-chip:hover { border-color: var(--primary); color: var(--text); background: var(--surface-2); }
+label.pop-item { cursor: pointer; }
 
 /* ---- Popover, modale, toast --------------------------------------------- */
 

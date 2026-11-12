@@ -199,8 +199,8 @@ function GenerationProgress({ gen }: { gen: { progress: number; start: number; t
 function Onboarding() {
   const config = useStore(s => s.config)!;
   const steps: { done: boolean; title: string; hint: string; page: Page }[] = [
-    { done: config.shiftTypes.length > 0, title: 'Definisci i tipi di turno', hint: 'Mattina, pomeriggio, notte, lunga, diurnismo… con orari e sigle.', page: 'shifts' },
-    { done: config.areas.length > 0, title: 'Imposta aree e copertura', hint: 'Quanti medici servono per turno, giorno per giorno e nei festivi.', page: 'shifts' },
+    { done: config.areas.length > 0, title: 'Aggiungi le aree da coprire', hint: 'Sale, postazioni di terapia intensiva, guardie.', page: 'shifts' },
+    { done: config.shiftTypes.length > 0, title: 'Scegli le fasce di ogni area', hint: 'Mattina, pomeriggio, notte, lunga… con orari tuoi e quanti medici servono ogni giorno.', page: 'shifts' },
     { done: config.doctors.some(d => d.active), title: 'Aggiungi i medici', hint: 'Con esclusioni, giorni da evitare, ore e limiti di notti.', page: 'doctors' },
   ];
   return (

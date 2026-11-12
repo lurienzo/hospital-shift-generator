@@ -157,6 +157,8 @@ export interface ServiceConfig {
   areas: Area[];
   doctors: Doctor[];
   rules: Rules;
+  /** Versione del modello delle fasce (2 = ogni area elenca solo le proprie). */
+  fasceV?: number;
 }
 
 /** F = ferie, A = altra assenza, D = desiderata (giorno libero), N = niente notte quel giorno. */

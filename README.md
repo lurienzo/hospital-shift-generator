@@ -17,19 +17,27 @@ turni, aree, medici e calendari propri. Si crea da un modello: *Sale
 operatorie*, *Terapia intensiva* o vuoto; oppure copiando la configurazione di
 un altro servizio.
 
-**Tipi di turno.** Completamente configurabili: nome, sigla, orario, colore.
-Due proprietà cambiano il comportamento:
+**Aree e fasce.** Tutto si imposta in un posto solo, *Turni e copertura*. Ogni
+area (sala, postazione di TI, guardia) ha le sue **fasce**, e nulla è fisso:
+di ogni fascia si cambiano sul posto nome, sigla, colore, orario e quanti
+medici servono in ogni giorno (la colonna **Festivo** vale nei festivi
+infrasettimanali). Un clic accende o spegne una casella, trascinando lo si fa
+su più giorni, con + e − si cambia il numero di medici; **C** rende la casella
+**critica**: va coperta sempre, anche a costo di violare desiderate e
+preferenze. Una fascia si aggiunge con un clic (quelle già usate in altre aree
+o i modelli Mattina, Pomeriggio, Notte, Lunga…, tutti modificabili) e si toglie
+con la ×. Due proprietà cambiano il comportamento:
 
 - *Notte*: il giorno dopo è **smonto** (vincolante, non si lavora); il secondo
   giorno è **riposo**, non obbligatorio ma conteggiato: se il medico lavora,
   compare come *riposo post-notte saltato* nel calendario e nelle statistiche.
-- *Diurnismo*: si assegna a settimane intere allo stesso medico, anche a
-  cavallo di due mesi.
+- *A settimane* (diurnismo): si assegna a settimane intere allo stesso medico,
+  anche a cavallo di due mesi.
 
-**Aree e copertura.** Per ogni area (sala, postazione di TI, guardia) una
-griglia turno × giorno dice quanti medici servono. La colonna **Festivo** vale
-nei festivi infrasettimanali. Ogni casella può essere **critica** (C): va
-coperta sempre, anche a costo di violare desiderate e preferenze.
+La stessa fascia può stare in più aree (es. *Lunga* in due linee): per la
+rotazione e l'equità è lo stesso turno, e nome e orario cambiano ovunque. Se
+un'area deve avere un orario diverso (es. una sala 09–17), *Separa dalle altre
+aree* le dà una copia propria.
 
 **Lunghe.** Con *Lunghe* attivo (predefinito nel modello Sale) un medico può
 fare più turni nella stessa giornata solo se sono **attaccati** (fine dell'uno =
@@ -39,11 +47,6 @@ mattina + pomeriggio sì, mattina + notte o pomeriggio + notte no. Regola
 pomeriggio, se fa anche il pomeriggio lo fa in quella sala; se fa solo la
 mattina torna a casa e il pomeriggio lo copre un altro; se la sala chiude, può
 spostarsi altrove. Obbligatoria (predefinito), preferibile o libera.
-
-**Orari propri di un'area.** Una sala con orario diverso (es. 09–17) si crea
-dalla sua scheda con *Orario di quest'area*: è un turno che vale solo lì e ha
-orari modificabili sul posto. Un turno qualunque si può anche restringere a
-un'area dalla colonna *Vale per* dei tipi di turno.
 
 **Medici.** Per ciascuno: aree in cui lavora, turni che fa (es. niente notti),
 giorni della settimana da evitare o vietati (anche per singolo turno), ore

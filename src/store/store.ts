@@ -9,6 +9,7 @@
 import { useSyncExternalStore } from 'react';
 import { monthKey } from '../domain/dates';
 import { templateConfig, uid } from '../domain/defaults';
+import { migrateFasce } from '../domain/fasce';
 import { emptyMonth, type MonthData, type ServiceConfig, type ServiceKind, type ServiceMeta } from '../domain/types';
 
 const PREFIX = 'turni2:';
@@ -87,8 +88,9 @@ function loadMonths(serviceId: string): Record<string, MonthData> {
 }
 
 /** Completa una configurazione salvata con i campi aggiunti in seguito. */
-function normalizeConfig(config: ServiceConfig): ServiceConfig {
+function normalizeConfig(raw: ServiceConfig): ServiceConfig {
   const base = templateConfig('custom');
+  const config = migrateFasce(raw);
   return {
     ...base,
     ...config,

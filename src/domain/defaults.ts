@@ -91,7 +91,7 @@ export function makeArea(name: string, color: string): Area {
 /** Configurazione iniziale per tipo di servizio. */
 export function templateConfig(kind: ServiceKind): ServiceConfig {
   const rules = defaultRules();
-  if (kind === 'custom') return { shiftTypes: [], areas: [], doctors: [], rules };
+  if (kind === 'custom') return { shiftTypes: [], areas: [], doctors: [], rules, fasceV: 2 };
 
   const [m, p, n] = SHIFT_PRESETS.slice(0, 3).map(makeShift);
   const shiftTypes = [m, p, n];
@@ -103,7 +103,7 @@ export function templateConfig(kind: ServiceKind): ServiceConfig {
     cov = fillCoverage(cov, m.id, WEEKEND_HOL, 1, true);
     cov = fillCoverage(cov, p.id, [...WEEKDAYS, ...WEEKEND_HOL], 1, true);
     cov = fillCoverage(cov, n.id, [...WEEKDAYS, ...WEEKEND_HOL], 1, true);
-    return { shiftTypes, areas: [{ ...area, coverage: cov }], doctors: [], rules };
+    return { shiftTypes, areas: [{ ...area, coverage: cov }], doctors: [], rules, fasceV: 2 };
   }
 
   const s1 = makeArea('Sala 1', '#2563eb');
@@ -118,7 +118,7 @@ export function templateConfig(kind: ServiceKind): ServiceConfig {
   gc = fillCoverage(gc, m.id, WEEKEND_HOL, 1, true);
   gc = fillCoverage(gc, p.id, WEEKEND_HOL, 1, true);
   // Nelle sale chi fa mattina puo proseguire col pomeriggio (lunga), nella stessa sala.
-  return { shiftTypes, areas: [room(s1), room(s2), { ...guard, coverage: gc }], doctors: [], rules: { ...rules, allowMultiplePerDay: true } };
+  return { shiftTypes, areas: [room(s1), room(s2), { ...guard, coverage: gc }], doctors: [], rules: { ...rules, allowMultiplePerDay: true }, fasceV: 2 };
 }
 
 export const SERVICE_KIND_LABELS: Record<ServiceKind, string> = {
